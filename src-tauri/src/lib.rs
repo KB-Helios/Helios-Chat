@@ -3,6 +3,7 @@ use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_log::{Target, TargetKind};
 
 pub mod app_config;
+pub mod discovery;
 pub mod eie;
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
