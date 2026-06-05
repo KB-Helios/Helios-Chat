@@ -16,6 +16,7 @@ The MVP starts with a user-configured EIE binary path because EIE builds vary by
 - Tauri sidecar documentation: `https://tauri.app/develop/sidecar/`
 - Tauri HTTP plugin permissions: `https://v2.tauri.app/plugin/http-client/`
 - EIE README at `https://github.com/KB01111/EIE`
+- TypeScript 7.0 Beta announcement: `https://devblogs.microsoft.com/typescript/announcing-typescript-7-0-beta/`
 
 Important EIE facts from the README:
 
@@ -37,6 +38,7 @@ Important EIE facts from the README:
 - Generate local EIE config securely under the app data directory.
 - Capture logs and emit lifecycle events to the frontend.
 - Default EIE host to `127.0.0.1` and reject broad host binding in app-managed config.
+- Use TypeScript Native Preview through `tsgo` for fast frontend type-checking during implementation.
 
 ## Non-Goals For MVP
 
@@ -315,6 +317,30 @@ Layout:
 - Replace dashboard demo sections with app routes or a simple tab/view state.
 - Keep controls dense and desktop-like, closer to a local tool than a marketing app.
 
+## TypeScript Native Preview Tooling
+
+The implementation should add TypeScript Native Preview as a development dependency:
+
+```bash
+npm install -D @typescript/native-preview@beta
+```
+
+Use the `tsgo` executable for fast TypeScript checks. Keep the existing `typescript` package available unless implementation verification proves every current tool works without it, because eslint and other ecosystem tools may still import `typescript` directly.
+
+Recommended script shape:
+
+```json
+{
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "typecheck:tsc": "tsc --noEmit",
+    "build": "tsgo -b && vite build"
+  }
+}
+```
+
+Implementation must verify `tsgo --noEmit` and the final build script against the current project. If `tsgo -b` exposes beta incompatibility with the existing project-reference setup, keep `tsgo --noEmit` as the primary type-check command and retain `tsc -b && vite build` as the build fallback until the issue is resolved.
+
 ## OpenAI-Compatible API Client Shape
 
 React uses a typed EIE client under `src/lib/eie/client.ts`.
@@ -413,6 +439,8 @@ Rust tests:
 
 Frontend tests:
 
+- `tsgo --noEmit` passes with the final TypeScript configuration.
+- If the build script uses `tsgo -b`, `npm run build` proves the native compiler path works end to end.
 - EIE client builds correct URLs.
 - Streaming parser handles token chunks, `[DONE]`, abort, and malformed chunks.
 - Settings form validates required fields.
@@ -437,6 +465,7 @@ Phase 1: MVP foundation
 - Add Tauri commands and lifecycle events.
 - Add typed frontend command wrappers.
 - Add EIE REST client and streaming parser.
+- Install `@typescript/native-preview@beta` and wire `tsgo` into frontend type-checking.
 - Replace dashboard demo with Chat, Models, Settings, and Diagnostics views.
 - Verify health, model listing, chat, streaming, logs, and stop/restart.
 
