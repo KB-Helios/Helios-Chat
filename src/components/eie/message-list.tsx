@@ -1,10 +1,17 @@
+import { useAutoAnimate } from "@formkit/auto-animate/react"
+
 import type { ChatTranscriptMessage } from "@/hooks/use-streaming-chat"
 
 export function MessageList({ messages }: { messages: ChatTranscriptMessage[] }) {
+  const [messageListRef] = useAutoAnimate<HTMLDivElement>({
+    duration: 160,
+    easing: "ease-out",
+  })
+
   return (
     <div className="min-h-[24rem] rounded-md border bg-muted/20 p-4">
       <div className="h-[24rem] overflow-auto">
-        <div className="flex flex-col gap-3 pr-3">
+        <div ref={messageListRef} className="flex flex-col gap-3 pr-3">
           {messages.map((message) => (
             <div
               key={message.id}

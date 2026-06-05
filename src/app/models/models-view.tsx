@@ -1,3 +1,4 @@
+import { useAutoAnimate } from "@formkit/auto-animate/react"
 import { RefreshCcwIcon } from "lucide-react"
 
 import { ModelDiscoveryTable } from "@/components/eie/model-discovery-table"
@@ -18,6 +19,11 @@ export function ModelsView({
   servedModels: string[]
   onRefresh(): void
 }) {
+  const [servedModelsRef] = useAutoAnimate<HTMLDivElement>({
+    duration: 160,
+    easing: "ease-out",
+  })
+
   return (
     <div className="grid gap-4">
       <div className="flex justify-end">
@@ -30,7 +36,7 @@ export function ModelsView({
         <CardHeader>
           <CardTitle>Served Models</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
+        <CardContent ref={servedModelsRef} className="flex flex-wrap gap-2">
           {servedModels.length
             ? servedModels.map((model) => (
                 <span

@@ -1,3 +1,4 @@
+import { useAutoAnimate } from "@formkit/auto-animate/react"
 import { FileIcon } from "lucide-react"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -5,6 +6,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { DiscoveredModel } from "@/lib/eie/types"
 
 export function ModelDiscoveryTable({ models }: { models: DiscoveredModel[] }) {
+  const [tableBodyRef] = useAutoAnimate<HTMLTableSectionElement>({
+    duration: 160,
+    easing: "ease-out",
+  })
+
   return (
     <Card>
       <CardHeader>
@@ -19,7 +25,7 @@ export function ModelDiscoveryTable({ models }: { models: DiscoveredModel[] }) {
               <TableHead className="text-right">Size</TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody>
+          <TableBody ref={tableBodyRef}>
             {models.map((model) => (
               <TableRow key={model.path}>
                 <TableCell className="font-medium">
