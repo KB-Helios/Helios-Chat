@@ -11,6 +11,9 @@ pub fn default_settings() -> EieSettings {
         gpu_layers: 99,
         config_preset: ConfigPreset::Generic,
         auto_start: false,
+        llmfit_binary_path: None,
+        llmfit_port: 8787,
+        auto_start_llmfit: false,
     }
 }
 
@@ -26,6 +29,13 @@ pub fn validate_settings(settings: &EieSettings) -> EieResult<()> {
         return Err(EieError::new(
             "invalid_port",
             "Port must be between 1024 and 65535.",
+        ));
+    }
+
+    if !(1024..=65535).contains(&settings.llmfit_port) || settings.llmfit_port == settings.port {
+        return Err(EieError::new(
+            "invalid_llmfit_port",
+            "llmfit port must be between 1024 and 65535 and cannot match the EIE port.",
         ));
     }
 
@@ -53,6 +63,20 @@ pub fn validate_settings(settings: &EieSettings) -> EieResult<()> {
             return Err(EieError::new(
                 "invalid_binary_extension",
                 "EIE binary must be a Windows .exe file.",
+            ));
+        }
+    }
+
+    if let Some(binary_path) = &settings.llmfit_binary_path {
+        let is_exe = binary_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"));
+
+        if !is_exe {
+            return Err(EieError::new(
+                "invalid_llmfit_binary_extension",
+                "llmfit binary must be a Windows .exe file.",
             ));
         }
     }
@@ -138,6 +162,36 @@ mod tests {
         assert_eq!(settings.gpu_layers, 99);
         assert_eq!(settings.config_preset, ConfigPreset::Generic);
         assert!(!settings.auto_start);
+    }
+
+    #[test]
+    fn default_settings_include_llmfit_defaults() {
+        let settings = default_settings();
+
+        assert_eq!(settings.llmfit_binary_path, None);
+        assert_eq!(settings.llmfit_port, 8787);
+        assert!(!settings.auto_start_llmfit);
+    }
+
+    #[test]
+    fn validation_rejects_llmfit_port_conflicts_with_eie() {
+        let mut settings = default_settings();
+        settings.port = 8787;
+        settings.llmfit_port = 8787;
+
+        let error = validate_settings(&settings).unwrap_err();
+
+        assert_eq!(error.code, "invalid_llmfit_port");
+    }
+
+    #[test]
+    fn validation_rejects_non_exe_llmfit_binary_paths() {
+        let mut settings = default_settings();
+        settings.llmfit_binary_path = Some(PathBuf::from(r"C:\Tools\llmfit.txt"));
+
+        let error = validate_settings(&settings).unwrap_err();
+
+        assert_eq!(error.code, "invalid_llmfit_binary_extension");
     }
 
     #[test]

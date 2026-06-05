@@ -18,6 +18,9 @@ export type EieSettings = {
   gpuLayers: number
   configPreset: ConfigPreset
   autoStart: boolean
+  llmfitBinaryPath: string | null
+  llmfitPort: number
+  autoStartLlmfit: boolean
 }
 
 export type EieStatus = {

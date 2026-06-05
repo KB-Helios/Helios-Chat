@@ -39,8 +39,11 @@ const defaultSettings: EieSettings = {
   contextLength: 8192,
   gpuLayers: 99,
   host: "127.0.0.1",
+  llmfitBinaryPath: null,
+  llmfitPort: 8787,
   modelDirectory: null,
   port: 8090,
+  autoStartLlmfit: false,
 }
 
 const defaultStatus: EieStatus = {

@@ -28,6 +28,16 @@ pub struct EieSettings {
     pub gpu_layers: u16,
     pub config_preset: ConfigPreset,
     pub auto_start: bool,
+    #[serde(default)]
+    pub llmfit_binary_path: Option<PathBuf>,
+    #[serde(default = "default_llmfit_port")]
+    pub llmfit_port: u16,
+    #[serde(default)]
+    pub auto_start_llmfit: bool,
+}
+
+fn default_llmfit_port() -> u16 {
+    8787
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

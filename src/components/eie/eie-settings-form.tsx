@@ -31,6 +31,48 @@ export function EieSettingsForm({
           }
         />
       </Field>
+      <div className="grid gap-4 rounded-md border p-3">
+        <div>
+          <div className="font-medium">llmfit helper</div>
+          <div className="text-sm text-muted-foreground">
+            Used for GGUF fit estimates and model discovery.
+          </div>
+        </div>
+        <Field label="llmfit.exe path">
+          <Input
+            value={draft.llmfitBinaryPath ?? ""}
+            placeholder="C:\\Tools\\llmfit.exe"
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                llmfitBinaryPath: event.target.value.trim() || null,
+              })
+            }
+          />
+        </Field>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="llmfit port">
+            <Input
+              min={1024}
+              max={65535}
+              type="number"
+              value={draft.llmfitPort}
+              onChange={(event) =>
+                setDraft({ ...draft, llmfitPort: Number(event.target.value) })
+              }
+            />
+          </Field>
+          <div className="flex items-end gap-2">
+            <Checkbox
+              checked={draft.autoStartLlmfit}
+              onCheckedChange={(checked) =>
+                setDraft({ ...draft, autoStartLlmfit: checked === true })
+              }
+            />
+            <Label>Auto-start llmfit</Label>
+          </div>
+        </div>
+      </div>
       <Field label="Model directory">
         <Input
           value={draft.modelDirectory ?? ""}
