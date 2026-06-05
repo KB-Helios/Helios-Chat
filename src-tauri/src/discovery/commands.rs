@@ -1,6 +1,8 @@
 use crate::app_config;
+use crate::discovery::download::ModelDownloadManager;
+use crate::discovery::hf::fetch_hf_gguf_files;
 use crate::discovery::manager::LlmfitManager;
-use crate::discovery::types::{FitModel, FitModelQuery, LlmfitStatus};
+use crate::discovery::types::{FitModel, FitModelQuery, HfGgufFile, LlmfitStatus, ModelDownload};
 use crate::eie::types::EieError;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -74,6 +76,46 @@ pub fn list_fit_models(
     manager
         .list_fit_models(&settings, query)
         .map_err(command_error)
+}
+
+#[tauri::command]
+pub fn get_hf_gguf_files(repo_id: String) -> Result<Vec<HfGgufFile>, String> {
+    fetch_hf_gguf_files(&repo_id).map_err(command_error)
+}
+
+#[tauri::command]
+pub fn download_hf_gguf(
+    app: AppHandle,
+    manager: State<'_, ModelDownloadManager>,
+    repo_id: String,
+    filename: String,
+) -> Result<ModelDownload, String> {
+    let settings = app_config::load_settings(&app).map_err(command_error)?;
+    let model_directory = settings.model_directory.ok_or_else(|| {
+        command_error(EieError::new(
+            "missing_model_directory",
+            "Choose a model directory before downloading GGUF files.",
+        ))
+    })?;
+    manager
+        .start_download(app, model_directory, repo_id, filename)
+        .map_err(command_error)
+}
+
+#[tauri::command]
+pub fn cancel_model_download(
+    app: AppHandle,
+    manager: State<'_, ModelDownloadManager>,
+    job_id: u64,
+) -> Result<ModelDownload, String> {
+    manager.cancel(Some(app), job_id).map_err(command_error)
+}
+
+#[tauri::command]
+pub fn get_model_downloads(
+    manager: State<'_, ModelDownloadManager>,
+) -> Result<Vec<ModelDownload>, String> {
+    Ok(manager.list())
 }
 
 fn command_error(error: EieError) -> String {

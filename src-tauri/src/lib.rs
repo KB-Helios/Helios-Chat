@@ -54,6 +54,7 @@ pub fn run() {
         .plugin(external_navigation_plugin())
         .manage(eie::manager::EieManager::default())
         .manage(discovery::manager::LlmfitManager::default())
+        .manage(discovery::download::ModelDownloadManager::default())
         .invoke_handler(tauri::generate_handler![
             greet,
             eie::commands::get_eie_settings,
@@ -74,7 +75,11 @@ pub fn run() {
             discovery::commands::stop_llmfit,
             discovery::commands::restart_llmfit,
             discovery::commands::get_llmfit_system,
-            discovery::commands::list_fit_models
+            discovery::commands::list_fit_models,
+            discovery::commands::get_hf_gguf_files,
+            discovery::commands::download_hf_gguf,
+            discovery::commands::cancel_model_download,
+            discovery::commands::get_model_downloads
         ])
         .on_page_load(|webview, payload| {
             if webview.label() == "main" && matches!(payload.event(), PageLoadEvent::Finished) {

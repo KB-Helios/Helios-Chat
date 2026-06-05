@@ -126,3 +126,26 @@ fn string_field(value: &serde_json::Value, key: &str) -> Option<String> {
         .and_then(|field| field.as_str())
         .map(str::to_string)
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DownloadStatus {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelDownload {
+    pub id: u64,
+    pub repo_id: String,
+    pub filename: String,
+    pub destination: String,
+    pub received_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub status: DownloadStatus,
+    pub error: Option<String>,
+}
