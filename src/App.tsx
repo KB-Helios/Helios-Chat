@@ -281,7 +281,9 @@ export default function App() {
                 onModelChange={setSelectedModel}
               />
             ) : null}
-            {activeView === "discover" ? <DiscoverView /> : null}
+            {activeView === "discover" ? (
+              <DiscoverView onDownloadCompleted={refreshModels} />
+            ) : null}
             {activeView === "models" ? (
               <ModelsView
                 discoveredModels={discoveredModels}

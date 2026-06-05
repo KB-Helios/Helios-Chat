@@ -58,15 +58,29 @@ export function useModelDiscovery() {
     }
   }, [])
 
-  const downloadFile = useCallback(async (file: HfGgufFile) => {
-    const job = await downloadHfGguf(file.repoId, file.filename)
+  const applyDownloadUpdate = useCallback((download: ModelDownload) => {
     setDownloads((current) => [
-      job,
-      ...current.filter((item) => item.id !== job.id),
+      download,
+      ...current.filter((item) => item.id !== download.id),
     ])
   }, [])
 
+  const downloadFile = useCallback(
+    async (file: HfGgufFile) => {
+      setError(null)
+
+      try {
+        const job = await downloadHfGguf(file.repoId, file.filename)
+        applyDownloadUpdate(job)
+      } catch (error) {
+        setError(error instanceof Error ? error.message : String(error))
+      }
+    },
+    [applyDownloadUpdate],
+  )
+
   return {
+    applyDownloadUpdate,
     downloads,
     downloadFile,
     error,
