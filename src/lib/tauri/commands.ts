@@ -1,5 +1,12 @@
 import { trackedInvoke } from "@/lib/tauri"
 import type {
+  FitModel,
+  FitModelQuery,
+  HfGgufFile,
+  LlmfitStatus,
+  ModelDownload,
+} from "@/lib/discovery/types"
+import type {
   DiscoveredModel,
   EieConfigPreview,
   EieLogLine,
@@ -55,4 +62,44 @@ export function clearEieLogs() {
 
 export function openLogDir() {
   return trackedInvoke<string>("open_log_dir")
+}
+
+export function validateLlmfitBinary(path: string) {
+  return trackedInvoke<boolean>("validate_llmfit_binary", { path })
+}
+
+export function getLlmfitStatus() {
+  return trackedInvoke<LlmfitStatus>("get_llmfit_status")
+}
+
+export function startLlmfit() {
+  return trackedInvoke<LlmfitStatus>("start_llmfit")
+}
+
+export function stopLlmfit() {
+  return trackedInvoke<LlmfitStatus>("stop_llmfit")
+}
+
+export function restartLlmfit() {
+  return trackedInvoke<LlmfitStatus>("restart_llmfit")
+}
+
+export function listFitModels(query: FitModelQuery) {
+  return trackedInvoke<FitModel[]>("list_fit_models", { query })
+}
+
+export function getHfGgufFiles(repoId: string) {
+  return trackedInvoke<HfGgufFile[]>("get_hf_gguf_files", { repoId })
+}
+
+export function downloadHfGguf(repoId: string, filename: string) {
+  return trackedInvoke<ModelDownload>("download_hf_gguf", { repoId, filename })
+}
+
+export function cancelModelDownload(jobId: number) {
+  return trackedInvoke<ModelDownload>("cancel_model_download", { jobId })
+}
+
+export function getModelDownloads() {
+  return trackedInvoke<ModelDownload[]>("get_model_downloads")
 }
