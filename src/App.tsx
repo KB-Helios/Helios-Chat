@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "r
 
 import { ChatView } from "@/app/chat/chat-view"
 import { DiagnosticsView } from "@/app/diagnostics/diagnostics-view"
+import { DiscoverView } from "@/app/discover/discover-view"
 import { ModelsView } from "@/app/models/models-view"
 import { SettingsView } from "@/app/settings/settings-view"
 import { AppSidebar, type AppView } from "@/components/app-sidebar"
@@ -10,6 +11,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { useEieEvents } from "@/hooks/use-eie-events"
 import { useEieModels } from "@/hooks/use-eie-models"
+import type { LlmfitStatus } from "@/lib/discovery/types"
 import { formatEieError } from "@/lib/eie/errors"
 import type {
   EieConfigPreview,
@@ -24,12 +26,17 @@ import {
   getEieLogs,
   getEieSettings,
   getEieStatus,
+  getLlmfitStatus,
   openLogDir,
+  restartLlmfit,
   restartEie,
   saveEieSettings,
+  startLlmfit,
   startEie,
+  stopLlmfit,
   stopEie,
 } from "@/lib/tauri/commands"
+import { listenToLlmfitStatus } from "@/lib/tauri/events"
 
 const defaultSettings: EieSettings = {
   autoStart: false,
@@ -54,8 +61,16 @@ const defaultStatus: EieStatus = {
   state: "stopped",
 }
 
+const defaultLlmfitStatus: LlmfitStatus = {
+  baseUrl: "http://127.0.0.1:8787",
+  lastError: null,
+  pid: null,
+  state: "stopped",
+}
+
 const viewTitles: Record<AppView, string> = {
   chat: "Chat",
+  discover: "Discover",
   diagnostics: "Diagnostics",
   models: "Models",
   settings: "Settings",
@@ -68,6 +83,7 @@ export default function App() {
     null,
   )
   const [logs, setLogs] = useState<EieLogLine[]>([])
+  const [llmfitStatus, setLlmfitStatus] = useState(defaultLlmfitStatus)
   const [selectedModel, setSelectedModel] = useState("")
   const [settings, setSettings] = useState(defaultSettings)
   const [status, setStatus] = useState(defaultStatus)
@@ -103,14 +119,16 @@ export default function App() {
 
   const loadInitialState = useCallback(async () => {
     try {
-      const [nextSettings, nextStatus, nextLogs] = await Promise.all([
+      const [nextSettings, nextStatus, nextLogs, nextLlmfitStatus] = await Promise.all([
         getEieSettings(),
         getEieStatus(),
         getEieLogs(),
+        getLlmfitStatus(),
       ])
       setSettings(nextSettings)
       setStatus(nextStatus)
       setLogs(nextLogs)
+      setLlmfitStatus(nextLlmfitStatus)
     } catch (error) {
       setAppError(formatEieError(error))
     }
@@ -127,6 +145,22 @@ export default function App() {
 
     return () => window.clearTimeout(timer)
   }, [loadInitialState])
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return
+    }
+
+    let unlisten: (() => void) | undefined
+
+    void listenToLlmfitStatus(setLlmfitStatus).then((nextUnlisten) => {
+      unlisten = nextUnlisten
+    })
+
+    return () => {
+      unlisten?.()
+    }
+  }, [])
 
   async function handleSaveSettings(nextSettings: EieSettings) {
     try {
@@ -161,6 +195,33 @@ export default function App() {
       setStatus(await restartEie())
       setAppError(null)
       void refreshModels()
+    } catch (error) {
+      setAppError(formatEieError(error))
+    }
+  }
+
+  async function handleStartLlmfit() {
+    try {
+      setLlmfitStatus(await startLlmfit())
+      setAppError(null)
+    } catch (error) {
+      setAppError(formatEieError(error))
+    }
+  }
+
+  async function handleStopLlmfit() {
+    try {
+      setLlmfitStatus(await stopLlmfit())
+      setAppError(null)
+    } catch (error) {
+      setAppError(formatEieError(error))
+    }
+  }
+
+  async function handleRestartLlmfit() {
+    try {
+      setLlmfitStatus(await restartLlmfit())
+      setAppError(null)
     } catch (error) {
       setAppError(formatEieError(error))
     }
@@ -220,6 +281,7 @@ export default function App() {
                 onModelChange={setSelectedModel}
               />
             ) : null}
+            {activeView === "discover" ? <DiscoverView /> : null}
             {activeView === "models" ? (
               <ModelsView
                 discoveredModels={discoveredModels}
@@ -232,12 +294,16 @@ export default function App() {
             {activeView === "settings" ? (
               <SettingsView
                 error={appError}
+                llmfitStatus={llmfitStatus}
                 settings={settings}
                 status={status}
                 onRestart={handleRestart}
+                onRestartLlmfit={handleRestartLlmfit}
                 onSave={handleSaveSettings}
                 onStart={handleStart}
+                onStartLlmfit={handleStartLlmfit}
                 onStop={handleStop}
+                onStopLlmfit={handleStopLlmfit}
               />
             ) : null}
             {activeView === "diagnostics" ? (

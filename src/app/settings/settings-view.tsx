@@ -4,24 +4,33 @@ import { EieSettingsForm } from "@/components/eie/eie-settings-form"
 import { ServerStatusBadge } from "@/components/eie/server-status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import type { LlmfitStatus } from "@/lib/discovery/types"
 import type { EieSettings, EieStatus } from "@/lib/eie/types"
 
 export function SettingsView({
   error,
+  llmfitStatus,
   settings,
   status,
   onRestart,
+  onRestartLlmfit,
   onSave,
   onStart,
+  onStartLlmfit,
   onStop,
+  onStopLlmfit,
 }: {
   error: string | null
+  llmfitStatus: LlmfitStatus
   settings: EieSettings
   status: EieStatus
   onRestart(): void
+  onRestartLlmfit(): void
   onSave(settings: EieSettings): void
   onStart(): void
+  onStartLlmfit(): void
   onStop(): void
+  onStopLlmfit(): void
 }) {
   return (
     <div className="grid gap-4">
@@ -40,6 +49,28 @@ export function SettingsView({
             Stop
           </Button>
           <Button variant="outline" onClick={onRestart}>
+            <RotateCwIcon className="size-4" />
+            Restart
+          </Button>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle>llmfit Discovery Helper</CardTitle>
+          <span className="text-sm text-muted-foreground">
+            {llmfitStatus.state}
+          </span>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <Button onClick={onStartLlmfit}>
+            <PlayIcon className="size-4" />
+            Start
+          </Button>
+          <Button variant="secondary" onClick={onStopLlmfit}>
+            <SquareIcon className="size-4" />
+            Stop
+          </Button>
+          <Button variant="outline" onClick={onRestartLlmfit}>
             <RotateCwIcon className="size-4" />
             Restart
           </Button>

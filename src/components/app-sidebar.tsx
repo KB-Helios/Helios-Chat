@@ -2,6 +2,7 @@ import {
   ActivityIcon,
   BotMessageSquareIcon,
   BoxesIcon,
+  CompassIcon,
   Settings2Icon,
   SparklesIcon,
 } from "lucide-react"
@@ -16,7 +17,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 
-export type AppView = "chat" | "models" | "settings" | "diagnostics"
+export type AppView = "chat" | "discover" | "models" | "settings" | "diagnostics"
 
 type NavItem = {
   icon: ComponentType<{ className?: string }>
@@ -26,6 +27,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { icon: BotMessageSquareIcon, label: "Chat", view: "chat" },
+  { icon: CompassIcon, label: "Discover", view: "discover" },
   { icon: BoxesIcon, label: "Models", view: "models" },
   { icon: Settings2Icon, label: "Settings", view: "settings" },
   { icon: ActivityIcon, label: "Diagnostics", view: "diagnostics" },
