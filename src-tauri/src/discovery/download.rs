@@ -48,8 +48,7 @@ mod tests {
 
     #[test]
     fn destination_rejects_non_gguf() {
-        let error =
-            resolve_download_destination(Path::new(r"C:\Models"), "README.md").unwrap_err();
+        let error = resolve_download_destination(Path::new(r"C:\Models"), "README.md").unwrap_err();
 
         assert_eq!(error.code, "invalid_download_filename");
     }

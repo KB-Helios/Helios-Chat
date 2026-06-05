@@ -1,6 +1,6 @@
 use tauri::webview::PageLoadEvent;
-use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_log::{Target, TargetKind};
+use tauri_plugin_opener::OpenerExt;
 
 pub mod app_config;
 pub mod discovery;
@@ -53,6 +53,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(external_navigation_plugin())
         .manage(eie::manager::EieManager::default())
+        .manage(discovery::manager::LlmfitManager::default())
         .invoke_handler(tauri::generate_handler![
             greet,
             eie::commands::get_eie_settings,
@@ -66,7 +67,14 @@ pub fn run() {
             eie::commands::get_eie_status,
             eie::commands::get_eie_logs,
             eie::commands::clear_eie_logs,
-            eie::commands::open_log_dir
+            eie::commands::open_log_dir,
+            discovery::commands::validate_llmfit_binary,
+            discovery::commands::get_llmfit_status,
+            discovery::commands::start_llmfit,
+            discovery::commands::stop_llmfit,
+            discovery::commands::restart_llmfit,
+            discovery::commands::get_llmfit_system,
+            discovery::commands::list_fit_models
         ])
         .on_page_load(|webview, payload| {
             if webview.label() == "main" && matches!(payload.event(), PageLoadEvent::Finished) {
