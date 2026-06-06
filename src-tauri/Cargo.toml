@@ -1,38 +1,37 @@
 [package]
-name = "tauri-native"
+name = "helios-chat"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Helios Chat desktop app with EIE as the default local AI engine"
+authors = ["Helios Chat contributors"]
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "tauri_native_lib"
+name = "helios_chat_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "helios-chat"
+path = "src/main.rs"
+
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.5.1", features = [] }
 
 [dependencies]
-log = "0.4"
-tauri-plugin-log = "2"
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+anyhow = "1.0.95"
+futures-util = "0.3.31"
+reqwest = { version = "0.12.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.135"
+sha2 = "0.10.8"
+tauri = { version = "2.2.5", features = [] }
+tauri-plugin-dialog = "2.2.0"
+tauri-plugin-fs = "2.2.0"
+tauri-plugin-shell = "2.2.0"
+thiserror = "2.0.9"
+tokio = { version = "1.43.0", features = ["process", "sync", "time"] }
+url = "2.5.4"
+uuid = { version = "1.11.0", features = ["v4", "serde"] }
 
-
-[profile.dev]
-incremental = true # Compile your binary in smaller steps.
-
-[profile.release]
-codegen-units = 1 # Allows LLVM to perform better optimization.
-lto = true        # Enables link-time-optimizations.
-opt-level = "s"   # Prioritizes small binary size. Use `3` if you prefer speed.
-panic = "abort"   # Higher performance by disabling panic handlers.
-strip = true      # Ensures debug symbols are removed.
+[dev-dependencies]
+tempfile = "3.15.0"

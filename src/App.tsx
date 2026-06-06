@@ -1,326 +1,434 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
-
-import { ChatView } from "@/app/chat/chat-view"
-import { DiagnosticsView } from "@/app/diagnostics/diagnostics-view"
-import { DiscoverView } from "@/app/discover/discover-view"
-import { ModelsView } from "@/app/models/models-view"
-import { SettingsView } from "@/app/settings/settings-view"
-import { AppSidebar, type AppView } from "@/components/app-sidebar"
-import { SiteHeader } from "@/components/site-header"
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
-import { TooltipProvider } from "@/components/ui/tooltip"
-import { useEieEvents } from "@/hooks/use-eie-events"
-import { useEieModels } from "@/hooks/use-eie-models"
-import type { LlmfitStatus } from "@/lib/discovery/types"
-import { formatEieError } from "@/lib/eie/errors"
-import type {
-  EieConfigPreview,
-  EieLogLine,
-  EieSettings,
-  EieStatus,
-} from "@/lib/eie/types"
-import { isTauri } from "@/lib/tauri"
 import {
-  clearEieLogs,
-  generateEieConfig,
-  getEieLogs,
-  getEieSettings,
-  getEieStatus,
-  getLlmfitStatus,
-  openLogDir,
-  restartLlmfit,
-  restartEie,
-  saveEieSettings,
-  startLlmfit,
-  startEie,
-  stopLlmfit,
-  stopEie,
-} from "@/lib/tauri/commands"
-import { listenToLlmfitStatus } from "@/lib/tauri/events"
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Cpu,
+  Database,
+  Download,
+  HardDrive,
+  MessageSquare,
+  Play,
+  RefreshCw,
+  Send,
+  Settings,
+  SlidersHorizontal,
+  Square,
+  Terminal,
+  Upload,
+  Zap
+} from "lucide-react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  defaultSettings,
+  chatSend,
+  engineStart,
+  engineStatus,
+  engineStop,
+  isTauriRuntime,
+  modelsCatalog,
+  modelsDownload,
+  modelsImportLocal,
+  modelsLoad,
+  modelsSetDefault,
+  modelsUnload,
+  settingsGet,
+  settingsUpdate,
+  setupBuildEie,
+  setupCheckPrereqs,
+  type EngineStatus,
+  type HeliosSettings,
+  type ToolStatus
+} from "./lib/api";
+import { addUserMessage, appendAssistantToken, createInitialChatState, finishAssistantMessage, startAssistantMessage, type ChatMessage, type ChatState } from "./lib/chatState";
+import { catalogById, formatBytes, recommendedModel, type CatalogModel } from "./lib/catalog";
 
-const defaultSettings: EieSettings = {
-  autoStart: false,
-  binaryPath: null,
-  binarySource: "userPath",
-  configPreset: "generic",
-  contextLength: 8192,
-  gpuLayers: 99,
-  host: "127.0.0.1",
-  llmfitBinaryPath: null,
-  llmfitPort: 8787,
-  modelDirectory: null,
-  port: 8090,
-  autoStartLlmfit: false,
-}
-
-const defaultStatus: EieStatus = {
-  baseUrl: "http://127.0.0.1:8090",
-  configPath: null,
-  lastError: null,
-  pid: null,
-  state: "stopped",
-}
-
-const defaultLlmfitStatus: LlmfitStatus = {
-  baseUrl: "http://127.0.0.1:8787",
-  lastError: null,
-  pid: null,
-  state: "stopped",
-}
-
-const viewTitles: Record<AppView, string> = {
-  chat: "Chat",
-  discover: "Discover",
-  diagnostics: "Diagnostics",
-  models: "Models",
-  settings: "Settings",
-}
+const sampleConversations = [
+  { id: "local", title: "Local EIE session", meta: "Qwen3 4B" },
+  { id: "setup", title: "Setup notes", meta: "Toolchain" },
+  { id: "models", title: "Model testing", meta: "GGUF" }
+];
 
 export default function App() {
-  const [activeView, setActiveView] = useState<AppView>("chat")
-  const [appError, setAppError] = useState<string | null>(null)
-  const [configPreview, setConfigPreview] = useState<EieConfigPreview | null>(
-    null,
-  )
-  const [logs, setLogs] = useState<EieLogLine[]>([])
-  const [llmfitStatus, setLlmfitStatus] = useState(defaultLlmfitStatus)
-  const [selectedModel, setSelectedModel] = useState("")
-  const [settings, setSettings] = useState(defaultSettings)
-  const [status, setStatus] = useState(defaultStatus)
-
-  const handleStatus = useCallback((nextStatus: EieStatus) => {
-    setStatus(nextStatus)
-  }, [])
-
-  const handleLog = useCallback((line: EieLogLine) => {
-    setLogs((current) => [...current.slice(-499), line])
-  }, [])
-
-  useEieEvents({
-    onLog: handleLog,
-    onStatus: handleStatus,
-  })
-
-  const { discoveredModels, error: modelError, isLoading, refreshModels, servedModels } =
-    useEieModels(settings, status)
-
-  const visibleModels = useMemo(() => {
-    if (servedModels.length > 0) {
-      return servedModels
-    }
-
-    return discoveredModels.map((model) => model.name)
-  }, [discoveredModels, servedModels])
-
-  const effectiveSelectedModel =
-    selectedModel && visibleModels.includes(selectedModel)
-      ? selectedModel
-      : (visibleModels[0] ?? "")
-
-  const loadInitialState = useCallback(async () => {
-    try {
-      const [nextSettings, nextStatus, nextLogs, nextLlmfitStatus] = await Promise.all([
-        getEieSettings(),
-        getEieStatus(),
-        getEieLogs(),
-        getLlmfitStatus(),
-      ])
-      setSettings(nextSettings)
-      setStatus(nextStatus)
-      setLogs(nextLogs)
-      setLlmfitStatus(nextLlmfitStatus)
-    } catch (error) {
-      setAppError(formatEieError(error))
-    }
-  }, [])
+  const [catalog, setCatalog] = useState<CatalogModel[]>([]);
+  const [settings, setSettings] = useState<HeliosSettings>(defaultSettings);
+  const [tools, setTools] = useState<ToolStatus[]>([]);
+  const [engine, setEngine] = useState<EngineStatus>({ running: false, endpoint: "http://127.0.0.1:8090", detail: "Checking engine..." });
+  const [chat, setChat] = useState<ChatState>(() => createInitialChatState("Qwen3 4B"));
+  const [prompt, setPrompt] = useState("");
+  const [selectedTab, setSelectedTab] = useState<"models" | "settings">("models");
+  const [activity, setActivity] = useState("Idle");
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!isTauri()) {
-      return
-    }
+    void refreshAll();
+  }, []);
 
-    const timer = window.setTimeout(() => {
-      void loadInitialState()
-    }, 0)
+  const byId = useMemo(() => catalogById(catalog), [catalog]);
+  const activeModel = settings.default_model_id ? byId[settings.default_model_id] : recommendedModel(catalog);
+  const readyTools = tools.filter((tool) => tool.present).length;
+  const requiredToolsReady = tools.filter((tool) => ["git", "cmake", "cl"].includes(tool.name)).every((tool) => tool.present);
 
-    return () => window.clearTimeout(timer)
-  }, [loadInitialState])
+  async function refreshAll() {
+    const [nextCatalog, nextSettings, nextTools, nextEngine] = await Promise.all([
+      modelsCatalog(),
+      settingsGet(),
+      setupCheckPrereqs(),
+      engineStatus()
+    ]);
+    setCatalog(nextCatalog);
+    setSettings(nextSettings.default_model_id ? nextSettings : { ...nextSettings, default_model_id: recommendedModel(nextCatalog)?.id });
+    setTools(nextTools);
+    setEngine(nextEngine);
+    setChat((state) => ({ ...state, activeModelName: recommendedModel(nextCatalog)?.name ?? "Local model" }));
+  }
 
-  useEffect(() => {
-    if (!isTauri()) {
-      return
-    }
-
-    let unlisten: (() => void) | undefined
-
-    void listenToLlmfitStatus(setLlmfitStatus).then((nextUnlisten) => {
-      unlisten = nextUnlisten
-    })
-
-    return () => {
-      unlisten?.()
-    }
-  }, [])
-
-  async function handleSaveSettings(nextSettings: EieSettings) {
+  async function handleBuild() {
+    setBusy(true);
+    setActivity("Preparing EIE build");
     try {
-      setSettings(await saveEieSettings(nextSettings))
-      setAppError(null)
+      const result = await setupBuildEie();
+      setActivity(`Prepared ${result.backend.toUpperCase()} build`);
     } catch (error) {
-      setAppError(formatEieError(error))
+      setActivity(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
     }
   }
 
-  async function handleStart() {
+  async function handleEngineToggle() {
+    setBusy(true);
     try {
-      setStatus(await startEie())
-      setAppError(null)
-      void refreshModels()
+      const next = engine.running ? await engineStop() : await engineStart();
+      setEngine(next);
+      setActivity(next.detail);
     } catch (error) {
-      setAppError(formatEieError(error))
+      setActivity(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
     }
   }
 
-  async function handleStop() {
+  async function handleDefaultModel(model: CatalogModel) {
+    const next = await modelsSetDefault(model.id);
+    setSettings(next);
+    setChat((state) => ({ ...state, activeModelName: model.name }));
+    setActivity(`${model.name} is the default`);
+  }
+
+  async function handleDownload(model: CatalogModel) {
+    setBusy(true);
+    setActivity(`Downloading ${model.name}`);
     try {
-      setStatus(await stopEie())
-      setAppError(null)
+      await modelsDownload(model.id);
+      setActivity(`${model.name} downloaded`);
     } catch (error) {
-      setAppError(formatEieError(error))
+      setActivity(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
     }
   }
 
-  async function handleRestart() {
+  async function handleImport() {
+    if (!isTauriRuntime()) {
+      setActivity("Local GGUF import is available in the desktop runtime");
+      return;
+    }
+
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: "GGUF model", extensions: ["gguf"] }]
+    });
+    if (typeof selected !== "string") {
+      return;
+    }
+    const imported = await modelsImportLocal(selected);
+    setActivity(`Imported ${imported}`);
+  }
+
+  async function handleLoad(model: CatalogModel) {
+    setBusy(true);
+    setActivity(`Loading ${model.name}`);
     try {
-      setStatus(await restartEie())
-      setAppError(null)
-      void refreshModels()
+      await modelsLoad(model.id);
+      setActivity(`${model.name} loaded`);
     } catch (error) {
-      setAppError(formatEieError(error))
+      setActivity(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
     }
   }
 
-  async function handleStartLlmfit() {
+  async function handleUnload(model: CatalogModel) {
+    setBusy(true);
+    setActivity(`Unloading ${model.name}`);
     try {
-      setLlmfitStatus(await startLlmfit())
-      setAppError(null)
+      await modelsUnload(model.id);
+      setActivity(`${model.name} unloaded`);
     } catch (error) {
-      setAppError(formatEieError(error))
+      setActivity(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
     }
   }
 
-  async function handleStopLlmfit() {
-    try {
-      setLlmfitStatus(await stopLlmfit())
-      setAppError(null)
-    } catch (error) {
-      setAppError(formatEieError(error))
-    }
+  async function handleSettingsPatch(patch: Partial<HeliosSettings>) {
+    const next = { ...settings, ...patch };
+    setSettings(next);
+    await settingsUpdate(next);
   }
 
-  async function handleRestartLlmfit() {
-    try {
-      setLlmfitStatus(await restartLlmfit())
-      setAppError(null)
-    } catch (error) {
-      setAppError(formatEieError(error))
+  async function handleSend(event: FormEvent) {
+    event.preventDefault();
+    const trimmed = prompt.trim();
+    if (!trimmed || busy) {
+      return;
     }
-  }
 
-  async function handleRefreshConfig() {
-    try {
-      setConfigPreview(await generateEieConfig())
-      setAppError(null)
-    } catch (error) {
-      setAppError(formatEieError(error))
-    }
-  }
+    setPrompt("");
+    setBusy(true);
+    setActivity("Generating");
+    const assistantId = crypto.randomUUID();
+    const userChat = addUserMessage(chat, trimmed);
+    let nextChat = startAssistantMessage(userChat, assistantId);
+    setChat(nextChat);
 
-  async function handleClearLogs() {
-    try {
-      await clearEieLogs()
-      setLogs([])
-    } catch (error) {
-      setAppError(formatEieError(error))
-    }
-  }
+    if (isTauriRuntime()) {
+      let receivedToken = false;
+      const { listen } = await import("@tauri-apps/api/event");
+      const unlistenToken = await listen<string>("chat:token", (event) => {
+        receivedToken = true;
+        nextChat = appendAssistantToken(nextChat, String(event.payload ?? ""));
+        setChat(nextChat);
+      });
+      const unlistenDone = await listen<string>("chat:done", () => {
+        setActivity("Idle");
+      });
 
-  async function handleOpenLogDir() {
-    try {
-      await openLogDir()
-    } catch (error) {
-      setAppError(formatEieError(error))
+      try {
+        const response = await chatSend({
+          model: activeModel?.id ?? settings.default_model_id ?? defaultSettings.default_model_id ?? "qwen3-4b-q4-k-m",
+          messages: userChat.messages.map((message) => ({ role: message.role, content: message.content })),
+          temperature: settings.temperature,
+          top_p: settings.top_p,
+          max_tokens: settings.max_tokens
+        });
+        if (!receivedToken && response.content) {
+          nextChat = appendAssistantToken(nextChat, response.content);
+          setChat(nextChat);
+        }
+        setChat(finishAssistantMessage(nextChat));
+        setActivity("Idle");
+      } catch (error) {
+        nextChat = appendAssistantToken(nextChat, error instanceof Error ? error.message : String(error));
+        setChat(finishAssistantMessage(nextChat));
+        setActivity(error instanceof Error ? error.message : String(error));
+      } finally {
+        unlistenToken();
+        unlistenDone();
+        setBusy(false);
+      }
+      return;
     }
+
+    const tokens = ["EIE ", "is ", "wired ", "as ", "the ", "default ", "local ", "engine. ", "Complete ", "first-run ", "setup ", "to ", "replace ", "this ", "browser ", "preview ", "with ", "real ", "model ", "tokens."];
+    for (const token of tokens) {
+      await new Promise((resolve) => window.setTimeout(resolve, 45));
+      nextChat = appendAssistantToken(nextChat, token);
+      setChat(nextChat);
+    }
+    setChat(finishAssistantMessage(nextChat));
+    setActivity("Idle");
+    setBusy(false);
   }
 
   return (
-    <TooltipProvider>
-      <SidebarProvider
-        style={
-          {
-            "--sidebar-width": "calc(var(--spacing) * 62)",
-            "--header-height": "calc(var(--spacing) * 12)",
-          } as CSSProperties
-        }
-      >
-        <AppSidebar activeView={activeView} onViewChange={setActiveView} />
-        <SidebarInset>
-          <SiteHeader status={status} title={viewTitles[activeView]} />
-          <main className="flex flex-1 flex-col gap-4 p-4 lg:p-6">
-            {appError ? (
-              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {appError}
+    <main className="app-shell">
+      <aside className="sidebar">
+        <div className="brand-row">
+          <div className="brand-mark"><Zap size={20} /></div>
+          <div>
+            <h1>Helios Chat</h1>
+            <p>EIE local runtime</p>
+          </div>
+        </div>
+
+        <div className="engine-strip">
+          <div className={engine.running ? "status-dot online" : "status-dot"} />
+          <div>
+            <strong>{engine.running ? "Engine online" : "Engine offline"}</strong>
+            <span>{engine.endpoint}</span>
+          </div>
+          <button className="icon-button" onClick={handleEngineToggle} disabled={busy} title={engine.running ? "Stop EIE" : "Start EIE"}>
+            {engine.running ? <Square size={17} /> : <Play size={17} />}
+          </button>
+        </div>
+
+        <nav className="conversation-list" aria-label="Conversations">
+          {sampleConversations.map((conversation) => (
+            <button className="conversation-item active" key={conversation.id}>
+              <MessageSquare size={16} />
+              <span>{conversation.title}</span>
+              <small>{conversation.meta}</small>
+            </button>
+          ))}
+        </nav>
+      </aside>
+
+      <section className="workbench">
+        <header className="topbar">
+          <div>
+            <span className="eyebrow">Default model</span>
+            <h2>{activeModel?.name ?? "No model selected"}</h2>
+          </div>
+          <div className="topbar-actions">
+            <button className="toolbar-button" onClick={refreshAll} title="Refresh status">
+              <RefreshCw size={17} />
+              Refresh
+            </button>
+            <button className="toolbar-button primary" onClick={handleBuild} disabled={busy || !requiredToolsReady} title="Build EIE">
+              <Terminal size={17} />
+              Build EIE
+            </button>
+          </div>
+        </header>
+
+        <div className="main-grid">
+          <section className="chat-panel">
+            <div className="message-scroll">
+              {chat.messages.length === 0 ? (
+                <div className="empty-state">
+                  <Activity size={28} />
+                  <strong>Ready for a local session</strong>
+                  <span>{activeModel?.name ?? "Choose a GGUF model"} through EIE</span>
+                </div>
+              ) : (
+                chat.messages.map((message) => <MessageBubble key={message.id} message={message} />)
+              )}
+            </div>
+
+            <form className="composer" onSubmit={handleSend}>
+              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ask Helios..." rows={3} />
+              <button className="send-button" disabled={!prompt.trim() || busy} title="Send message">
+                <Send size={18} />
+              </button>
+            </form>
+          </section>
+
+          <aside className="control-panel">
+            <section className="setup-band">
+              <div className="section-heading">
+                <Cpu size={18} />
+                <h3>First Run</h3>
+                <span>{readyTools}/{tools.length || 4}</span>
               </div>
-            ) : null}
-            {activeView === "chat" ? (
-              <ChatView
-                models={visibleModels}
-                selectedModel={effectiveSelectedModel}
-                settings={settings}
-                status={status}
-                onModelChange={setSelectedModel}
-              />
-            ) : null}
-            {activeView === "discover" ? (
-              <DiscoverView onDownloadCompleted={refreshModels} />
-            ) : null}
-            {activeView === "models" ? (
-              <ModelsView
-                discoveredModels={discoveredModels}
-                error={modelError}
-                isLoading={isLoading}
-                servedModels={servedModels}
-                onRefresh={refreshModels}
-              />
-            ) : null}
-            {activeView === "settings" ? (
-              <SettingsView
-                error={appError}
-                llmfitStatus={llmfitStatus}
-                settings={settings}
-                status={status}
-                onRestart={handleRestart}
-                onRestartLlmfit={handleRestartLlmfit}
-                onSave={handleSaveSettings}
-                onStart={handleStart}
-                onStartLlmfit={handleStartLlmfit}
-                onStop={handleStop}
-                onStopLlmfit={handleStopLlmfit}
-              />
-            ) : null}
-            {activeView === "diagnostics" ? (
-              <DiagnosticsView
-                configPreview={configPreview}
-                logs={logs}
-                status={status}
-                onClearLogs={handleClearLogs}
-                onOpenLogDir={handleOpenLogDir}
-                onRefreshConfig={handleRefreshConfig}
-              />
-            ) : null}
-          </main>
-        </SidebarInset>
-      </SidebarProvider>
-    </TooltipProvider>
-  )
+              <div className="tool-list">
+                {tools.map((tool) => (
+                  <a className="tool-row" href={tool.install_url || undefined} key={tool.name} target="_blank" rel="noreferrer">
+                    {tool.present ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                    <span>{tool.name}</span>
+                    <small>{tool.present ? "Ready" : "Missing"}</small>
+                  </a>
+                ))}
+              </div>
+            </section>
+
+            <div className="tabs">
+              <button className={selectedTab === "models" ? "selected" : ""} onClick={() => setSelectedTab("models")}>
+                <Database size={16} /> Models
+              </button>
+              <button className={selectedTab === "settings" ? "selected" : ""} onClick={() => setSelectedTab("settings")}>
+                <Settings size={16} /> Settings
+              </button>
+            </div>
+
+            {selectedTab === "models" ? (
+              <section className="model-list">
+                {catalog.map((model) => (
+                  <article className={model.id === settings.default_model_id ? "model-card selected" : "model-card"} key={model.id}>
+                    <div>
+                      <h3>{model.name}</h3>
+                      <p>{model.description}</p>
+                    </div>
+                    <div className="model-meta">
+                      <span><HardDrive size={14} /> {formatBytes(model.sizeBytes)}</span>
+                      <span>{model.quantization}</span>
+                      <span>{model.minimumVramGb} GB VRAM</span>
+                    </div>
+                    <div className="model-actions">
+                      <button onClick={() => handleDefaultModel(model)}>{model.id === settings.default_model_id ? "Default" : "Set default"}</button>
+                      <button onClick={() => handleLoad(model)} disabled={busy || !engine.running}>Load</button>
+                      <button onClick={() => handleUnload(model)} disabled={busy || !engine.running}>Unload</button>
+                      <button className="icon-button" onClick={() => handleDownload(model)} disabled={busy} title={`Download ${model.name}`}>
+                        <Download size={16} />
+                      </button>
+                    </div>
+                  </article>
+                ))}
+                <button className="import-button" onClick={handleImport}>
+                  <Upload size={16} />
+                  Import GGUF
+                </button>
+              </section>
+            ) : (
+              <section className="settings-list">
+                <label>
+                  <span><SlidersHorizontal size={15} /> Temperature</span>
+                  <input type="range" min="0" max="1.5" step="0.1" value={settings.temperature} onChange={(event) => handleSettingsPatch({ temperature: Number(event.target.value) })} />
+                  <strong>{settings.temperature.toFixed(1)}</strong>
+                </label>
+                <label>
+                  <span>Top P</span>
+                  <input type="range" min="0.1" max="1" step="0.05" value={settings.top_p} onChange={(event) => handleSettingsPatch({ top_p: Number(event.target.value) })} />
+                  <strong>{settings.top_p.toFixed(2)}</strong>
+                </label>
+                <label>
+                  <span>Context</span>
+                  <input type="number" min="1024" max="32768" step="1024" value={settings.n_ctx} onChange={(event) => handleSettingsPatch({ n_ctx: Number(event.target.value) })} />
+                </label>
+                <label>
+                  <span>Max tokens</span>
+                  <input type="number" min="64" max="8192" step="64" value={settings.max_tokens} onChange={(event) => handleSettingsPatch({ max_tokens: Number(event.target.value) })} />
+                </label>
+                <label>
+                  <span>GPU layers</span>
+                  <input type="number" min="0" max="99" value={settings.n_gpu_layers} onChange={(event) => handleSettingsPatch({ n_gpu_layers: Number(event.target.value) })} />
+                </label>
+                <label>
+                  <span>KV key</span>
+                  <select value={settings.kv_type_k} onChange={(event) => handleSettingsPatch({ kv_type_k: event.target.value })}>
+                    <option value="turbo3">turbo3</option>
+                    <option value="turbo4">turbo4</option>
+                    <option value="q8_0">q8_0</option>
+                    <option value="f16">f16</option>
+                  </select>
+                </label>
+                <label>
+                  <span>KV value</span>
+                  <select value={settings.kv_type_v} onChange={(event) => handleSettingsPatch({ kv_type_v: event.target.value })}>
+                    <option value="turbo3">turbo3</option>
+                    <option value="turbo2">turbo2</option>
+                    <option value="turbo4">turbo4</option>
+                    <option value="q8_0">q8_0</option>
+                    <option value="f16">f16</option>
+                  </select>
+                </label>
+              </section>
+            )}
+
+            <footer className="activity-line">{activity}</footer>
+          </aside>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function MessageBubble({ message }: { message: ChatMessage }) {
+  return (
+    <article className={`message ${message.role}`}>
+      <span>{message.role}</span>
+      <p>{message.content}{message.streaming ? <i /> : null}</p>
+    </article>
+  );
 }

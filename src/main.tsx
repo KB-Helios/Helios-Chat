@@ -1,16 +1,10 @@
-import { StrictMode } from "react"
-import { createRoot } from "react-dom/client"
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+import "./styles.css";
 
-import "./index.css"
-import App from "./App.tsx"
-import { ThemeProvider } from "@/components/theme-provider.tsx"
-import { ExternalLinkGuard } from "./components/external-link-guard.tsx"
-
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <ThemeProvider>
-      <ExternalLinkGuard />
-      <main data-ui-scroll-container><App /></main>
-    </ThemeProvider>
-  </StrictMode>
-)
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);

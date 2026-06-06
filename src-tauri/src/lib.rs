@@ -1,92 +1,50 @@
-use tauri::webview::PageLoadEvent;
-use tauri_plugin_log::{Target, TargetKind};
-use tauri_plugin_opener::OpenerExt;
-
-pub mod app_config;
-pub mod discovery;
+pub mod catalog;
+pub mod commands;
+pub mod db;
+pub mod download;
 pub mod eie;
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+pub mod paths;
+pub mod settings;
+pub mod setup;
+
+use commands::*;
+use eie::EngineRuntime;
+use std::sync::Mutex;
+
+pub struct RuntimeState {
+    pub engine: Mutex<EngineRuntime>,
 }
 
-fn external_navigation_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    tauri::plugin::Builder::<R>::new("external-navigation")
-        .on_navigation(|webview, url| {
-            let is_internal_host = matches!(
-                url.host_str(),
-                Some("localhost") | Some("127.0.0.1") | Some("tauri.localhost") | Some("::1")
-            );
-
-            let is_internal = url.scheme() == "tauri" || is_internal_host;
-
-            if is_internal {
-                return true;
-            }
-
-            let is_external_link = matches!(url.scheme(), "http" | "https" | "mailto" | "tel");
-
-            if is_external_link {
-                log::info!("opening external link in system browser: {}", url);
-                let _ = webview.opener().open_url(url.as_str(), None::<&str>);
-                return false;
-            }
-
-            true
-        })
-        .build()
+impl Default for RuntimeState {
+    fn default() -> Self {
+        Self {
+            engine: Mutex::new(EngineRuntime::default()),
+        }
+    }
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(
-            tauri_plugin_log::Builder::new()
-                .targets([
-                    Target::new(TargetKind::Stdout),
-                    Target::new(TargetKind::LogDir { file_name: None }),
-                    Target::new(TargetKind::Webview),
-                ])
-                .build(),
-        )
-        .plugin(tauri_plugin_opener::init())
-        .plugin(external_navigation_plugin())
-        .manage(eie::manager::EieManager::default())
-        .manage(discovery::manager::LlmfitManager::default())
-        .manage(discovery::download::ModelDownloadManager::default())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_shell::init())
+        .manage(RuntimeState::default())
         .invoke_handler(tauri::generate_handler![
-            greet,
-            eie::commands::get_eie_settings,
-            eie::commands::save_eie_settings,
-            eie::commands::validate_eie_binary,
-            eie::commands::discover_gguf_models,
-            eie::commands::generate_eie_config,
-            eie::commands::start_eie,
-            eie::commands::stop_eie,
-            eie::commands::restart_eie,
-            eie::commands::get_eie_status,
-            eie::commands::get_eie_logs,
-            eie::commands::clear_eie_logs,
-            eie::commands::open_log_dir,
-            discovery::commands::validate_llmfit_binary,
-            discovery::commands::get_llmfit_status,
-            discovery::commands::start_llmfit,
-            discovery::commands::stop_llmfit,
-            discovery::commands::restart_llmfit,
-            discovery::commands::get_llmfit_system,
-            discovery::commands::list_fit_models,
-            discovery::commands::get_hf_gguf_files,
-            discovery::commands::download_hf_gguf,
-            discovery::commands::cancel_model_download,
-            discovery::commands::get_model_downloads
+            setup_check_prereqs,
+            setup_build_eie,
+            engine_start,
+            engine_stop,
+            engine_status,
+            models_catalog,
+            models_download,
+            models_import_local,
+            models_set_default,
+            models_load,
+            models_unload,
+            chat_send,
+            settings_get,
+            settings_update
         ])
-        .on_page_load(|webview, payload| {
-            if webview.label() == "main" && matches!(payload.event(), PageLoadEvent::Finished) {
-                log::info!("main webview finished loading");
-                let _ = webview.window().show();
-            }
-        })
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .expect("error while running Helios Chat");
 }
