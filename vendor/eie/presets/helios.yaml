@@ -1,0 +1,13 @@
+# EIE Preset: Helios Chat smart warm default
+host: 127.0.0.1
+port: 8090
+strategy: generic
+model_dir: ./models
+auto_discover: true
+type_k: turbo3
+type_v: turbo3
+flash_attn: true
+n_ctx: 4096
+n_gpu_layers: 99
+reserve_mb: 512
+log_level: info

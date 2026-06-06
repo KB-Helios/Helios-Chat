@@ -1,0 +1,37 @@
+[package]
+name = "helios-chat"
+version = "0.1.0"
+description = "Helios Chat desktop app with EIE as the default local AI engine"
+authors = ["Helios Chat contributors"]
+edition = "2021"
+
+[lib]
+name = "helios_chat_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "helios-chat"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.5.1", features = [] }
+
+[dependencies]
+anyhow = "1.0.95"
+futures-util = "0.3.31"
+reqwest = { version = "0.12.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.135"
+sha2 = "0.10.8"
+tauri = { version = "2.2.5", features = [] }
+tauri-plugin-dialog = "2.2.0"
+tauri-plugin-fs = "2.2.0"
+tauri-plugin-shell = "2.2.0"
+thiserror = "2.0.9"
+tokio = { version = "1.43.0", features = ["process", "sync", "time"] }
+url = "2.5.4"
+uuid = { version = "1.11.0", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3.15.0"

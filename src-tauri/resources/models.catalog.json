@@ -1,0 +1,45 @@
+[
+  {
+    "id": "qwen3-4b-q4-k-m",
+    "name": "Qwen3 4B Q4_K_M",
+    "description": "Balanced local default for first-run chat on CPU or modest NVIDIA GPUs.",
+    "hf_repo": "ggml-org/Qwen3-4B-GGUF",
+    "hf_file": "Qwen3-4B-Q4_K_M.gguf",
+    "download_url": "https://huggingface.co/ggml-org/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
+    "size_bytes": 2500000000,
+    "sha256": "ab27b9bfa375a178d6cba48f3ad892b94b7739659dcc7aae8058ce0ffed6b328",
+    "quantization": "Q4_K_M",
+    "parameters": "4B",
+    "recommended": true,
+    "minimum_vram_gb": 4,
+    "tags": ["balanced", "chat", "gguf"]
+  },
+  {
+    "id": "qwen3-8b-q4-k-m",
+    "name": "Qwen3 8B Q4_K_M",
+    "description": "Higher quality option for systems with more memory and GPU headroom.",
+    "hf_repo": "prithivMLmods/Qwen3-8B-GGUF",
+    "hf_file": "Qwen3_8B.Q4_K_M.gguf",
+    "download_url": "https://huggingface.co/prithivMLmods/Qwen3-8B-GGUF/resolve/main/Qwen3_8B.Q4_K_M.gguf",
+    "size_bytes": 5030000000,
+    "quantization": "Q4_K_M",
+    "parameters": "8B",
+    "recommended": false,
+    "minimum_vram_gb": 8,
+    "tags": ["quality", "chat", "gguf"]
+  },
+  {
+    "id": "qwen3-1-7b-q4-k-m",
+    "name": "Qwen3 1.7B Q4_K_M",
+    "description": "Small compatibility model for quick CPU fallback checks.",
+    "hf_repo": "SandLogicTechnologies/Qwen3-GGUF",
+    "hf_file": "Qwen_Qwen3-1.7B-Q4_K_M.gguf",
+    "download_url": "https://huggingface.co/SandLogicTechnologies/Qwen3-GGUF/resolve/main/Qwen_Qwen3-1.7B-Q4_K_M.gguf",
+    "size_bytes": 1100000000,
+    "quantization": "Q4_K_M",
+    "parameters": "1.7B",
+    "recommended": false,
+    "minimum_vram_gb": 2,
+    "tags": ["small", "cpu", "gguf"]
+  }
+]
