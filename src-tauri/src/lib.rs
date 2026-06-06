@@ -3,6 +3,7 @@ pub mod commands;
 pub mod db;
 pub mod download;
 pub mod eie;
+pub mod knowledge;
 pub mod paths;
 pub mod settings;
 pub mod setup;
@@ -43,7 +44,17 @@ pub fn run() {
             models_unload,
             chat_send,
             settings_get,
-            settings_update
+            settings_update,
+            knowledge_stacks_list,
+            knowledge_stack_create,
+            knowledge_stack_update,
+            knowledge_stack_delete,
+            knowledge_sources_list,
+            knowledge_sources_add_files,
+            knowledge_sources_add_folder,
+            knowledge_source_remove,
+            knowledge_stack_reindex,
+            knowledge_search
         ])
         .run(tauri::generate_context!())
         .expect("error while running Helios Chat");

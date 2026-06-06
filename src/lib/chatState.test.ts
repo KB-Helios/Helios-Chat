@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { appendAssistantToken, createInitialChatState, finishAssistantMessage, startAssistantMessage } from "./chatState";
+import { appendAssistantToken, attachAssistantCitations, createInitialChatState, finishAssistantMessage, startAssistantMessage } from "./chatState";
 
 describe("chat state", () => {
   it("streams assistant tokens into the active draft message", () => {
@@ -20,5 +20,19 @@ describe("chat state", () => {
       content: "Hello world",
       streaming: false
     });
+  });
+
+  it("attaches citations to the active assistant message", () => {
+    const initial = createInitialChatState("Qwen3 4B");
+    const withDraft = startAssistantMessage(initial, "chatcmpl-1");
+    const cited = attachAssistantCitations(withDraft, [
+      {
+        sourceTitle: "local.md",
+        content: "Private knowledge stays local.",
+        score: 0.9
+      }
+    ]);
+
+    assert.equal(cited.messages[0].citations?.[0].sourceTitle, "local.md");
   });
 });

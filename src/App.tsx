@@ -1,19 +1,26 @@
 import {
   Activity,
   AlertTriangle,
+  BookOpen,
   CheckCircle2,
   Cpu,
   Database,
   Download,
+  FileText,
+  FolderOpen,
   HardDrive,
+  Layers,
   MessageSquare,
   Play,
+  Plus,
   RefreshCw,
+  Search,
   Send,
   Settings,
   SlidersHorizontal,
   Square,
   Terminal,
+  Trash2,
   Upload,
   Zap
 } from "lucide-react";
@@ -25,6 +32,14 @@ import {
   engineStatus,
   engineStop,
   isTauriRuntime,
+  knowledgeSearch,
+  knowledgeSourceRemove,
+  knowledgeSourcesAddFiles,
+  knowledgeSourcesAddFolder,
+  knowledgeSourcesList,
+  knowledgeStackCreate,
+  knowledgeStackReindex,
+  knowledgeStacksList,
   modelsCatalog,
   modelsDownload,
   modelsImportLocal,
@@ -37,10 +52,14 @@ import {
   setupCheckPrereqs,
   type EngineStatus,
   type HeliosSettings,
+  type KnowledgeSearchResult,
+  type KnowledgeSource,
+  type KnowledgeStack,
   type ToolStatus
 } from "./lib/api";
-import { addUserMessage, appendAssistantToken, createInitialChatState, finishAssistantMessage, startAssistantMessage, type ChatMessage, type ChatState } from "./lib/chatState";
+import { addUserMessage, appendAssistantToken, attachAssistantCitations, createInitialChatState, finishAssistantMessage, startAssistantMessage, type ChatMessage, type ChatState } from "./lib/chatState";
 import { catalogById, formatBytes, recommendedModel, type CatalogModel } from "./lib/catalog";
+import { buildKnowledgeChatFields, formatSourceStatus, toggleStackSelection } from "./lib/knowledgeState";
 
 const sampleConversations = [
   { id: "local", title: "Local EIE session", meta: "Qwen3 4B" },
@@ -55,13 +74,30 @@ export default function App() {
   const [engine, setEngine] = useState<EngineStatus>({ running: false, endpoint: "http://127.0.0.1:8090", detail: "Checking engine..." });
   const [chat, setChat] = useState<ChatState>(() => createInitialChatState("Qwen3 4B"));
   const [prompt, setPrompt] = useState("");
+  const [view, setView] = useState<"chat" | "knowledge">("chat");
   const [selectedTab, setSelectedTab] = useState<"models" | "settings">("models");
   const [activity, setActivity] = useState("Idle");
   const [busy, setBusy] = useState(false);
+  const [knowledgeStacks, setKnowledgeStacks] = useState<KnowledgeStack[]>([]);
+  const [selectedStackId, setSelectedStackId] = useState<string>();
+  const [activeStackIds, setActiveStackIds] = useState<string[]>([]);
+  const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([]);
+  const [knowledgeQuery, setKnowledgeQuery] = useState("");
+  const [knowledgeResults, setKnowledgeResults] = useState<KnowledgeSearchResult[]>([]);
+  const [newStackName, setNewStackName] = useState("Research Stack");
+  const [newStackDescription, setNewStackDescription] = useState("Local files and folders");
 
   useEffect(() => {
     void refreshAll();
   }, []);
+
+  useEffect(() => {
+    if (selectedStackId) {
+      void refreshSources(selectedStackId);
+    } else {
+      setKnowledgeSources([]);
+    }
+  }, [selectedStackId]);
 
   const byId = useMemo(() => catalogById(catalog), [catalog]);
   const activeModel = settings.default_model_id ? byId[settings.default_model_id] : recommendedModel(catalog);
@@ -69,17 +105,34 @@ export default function App() {
   const requiredToolsReady = tools.filter((tool) => ["git", "cmake", "cl"].includes(tool.name)).every((tool) => tool.present);
 
   async function refreshAll() {
-    const [nextCatalog, nextSettings, nextTools, nextEngine] = await Promise.all([
+    const [nextCatalog, nextSettings, nextTools, nextEngine, nextStacks] = await Promise.all([
       modelsCatalog(),
       settingsGet(),
       setupCheckPrereqs(),
-      engineStatus()
+      engineStatus(),
+      knowledgeStacksList()
     ]);
     setCatalog(nextCatalog);
     setSettings(nextSettings.default_model_id ? nextSettings : { ...nextSettings, default_model_id: recommendedModel(nextCatalog)?.id });
     setTools(nextTools);
     setEngine(nextEngine);
     setChat((state) => ({ ...state, activeModelName: recommendedModel(nextCatalog)?.name ?? "Local model" }));
+    setKnowledgeStacks(nextStacks);
+    setSelectedStackId((current) => current ?? nextStacks[0]?.id);
+  }
+
+  async function refreshKnowledge() {
+    const stacks = await knowledgeStacksList();
+    setKnowledgeStacks(stacks);
+    setSelectedStackId((current) => current && stacks.some((stack) => stack.id === current) ? current : stacks[0]?.id);
+  }
+
+  async function refreshSources(stackId = selectedStackId) {
+    if (!stackId) {
+      setKnowledgeSources([]);
+      return;
+    }
+    setKnowledgeSources(await knowledgeSourcesList(stackId));
   }
 
   async function handleBuild() {
@@ -178,6 +231,121 @@ export default function App() {
     await settingsUpdate(next);
   }
 
+  async function handleCreateStack() {
+    const name = newStackName.trim() || "Untitled Stack";
+    const stack = await knowledgeStackCreate(name, newStackDescription.trim());
+    setKnowledgeStacks((stacks) => [stack, ...stacks]);
+    setSelectedStackId(stack.id);
+    setNewStackName("Research Stack");
+    setNewStackDescription("Local files and folders");
+    setActivity(`Created ${stack.name}`);
+  }
+
+  async function handleAddKnowledgeFiles() {
+    if (!selectedStackId) {
+      setActivity("Create a knowledge stack first");
+      return;
+    }
+
+    let paths: string[] = ["C:/Helios/docs/local.md"];
+    if (isTauriRuntime()) {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        multiple: true,
+        filters: [
+          { name: "Knowledge files", extensions: ["txt", "md", "csv", "json", "jsonl", "pdf", "docx", "rtf", "epub"] }
+        ]
+      });
+      if (!selected) {
+        return;
+      }
+      paths = Array.isArray(selected) ? selected : [selected];
+    }
+
+    setBusy(true);
+    setActivity("Indexing files");
+    try {
+      await knowledgeSourcesAddFiles(selectedStackId, paths);
+      await refreshKnowledge();
+      await refreshSources(selectedStackId);
+      setActivity(`Indexed ${paths.length} file${paths.length === 1 ? "" : "s"}`);
+    } catch (error) {
+      setActivity(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleAddKnowledgeFolder() {
+    if (!selectedStackId) {
+      setActivity("Create a knowledge stack first");
+      return;
+    }
+
+    let folder = "C:/Helios/docs";
+    if (isTauriRuntime()) {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ directory: true, multiple: false });
+      if (typeof selected !== "string") {
+        return;
+      }
+      folder = selected;
+    }
+
+    setBusy(true);
+    setActivity("Indexing folder");
+    try {
+      const sources = await knowledgeSourcesAddFolder(selectedStackId, folder);
+      await refreshKnowledge();
+      await refreshSources(selectedStackId);
+      setActivity(`Indexed ${sources.length} source${sources.length === 1 ? "" : "s"}`);
+    } catch (error) {
+      setActivity(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleReindexStack() {
+    if (!selectedStackId) {
+      return;
+    }
+
+    setBusy(true);
+    setActivity("Reindexing stack");
+    try {
+      const sources = await knowledgeStackReindex(selectedStackId);
+      await refreshKnowledge();
+      await refreshSources(selectedStackId);
+      setActivity(`Reindexed ${sources.length} source${sources.length === 1 ? "" : "s"}`);
+    } catch (error) {
+      setActivity(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRemoveSource(sourceId: string) {
+    await knowledgeSourceRemove(sourceId);
+    await refreshKnowledge();
+    await refreshSources(selectedStackId);
+    setActivity("Removed source");
+  }
+
+  async function handleKnowledgeSearch() {
+    const query = knowledgeQuery.trim();
+    if (!query || !selectedStackId) {
+      return;
+    }
+    const results = await knowledgeSearch([selectedStackId], query, { top_k: 6, semantic_weight: 0.65 });
+    setKnowledgeResults(results);
+    setActivity(`Found ${results.length} result${results.length === 1 ? "" : "s"}`);
+  }
+
+  function handleToggleActiveStack(stackId: string) {
+    setActiveStackIds((ids) => toggleStackSelection(ids, stackId));
+  }
+
   async function handleSend(event: FormEvent) {
     event.preventDefault();
     const trimmed = prompt.trim();
@@ -211,12 +379,18 @@ export default function App() {
           messages: userChat.messages.map((message) => ({ role: message.role, content: message.content })),
           temperature: settings.temperature,
           top_p: settings.top_p,
-          max_tokens: settings.max_tokens
+          max_tokens: settings.max_tokens,
+          ...buildKnowledgeChatFields(activeStackIds)
         });
         if (!receivedToken && response.content) {
           nextChat = appendAssistantToken(nextChat, response.content);
           setChat(nextChat);
         }
+        nextChat = attachAssistantCitations(nextChat, response.citations.map((citation) => ({
+          sourceTitle: citation.source_title,
+          content: citation.content,
+          score: citation.score
+        })));
         setChat(finishAssistantMessage(nextChat));
         setActivity("Idle");
       } catch (error) {
@@ -237,6 +411,11 @@ export default function App() {
       nextChat = appendAssistantToken(nextChat, token);
       setChat(nextChat);
     }
+    nextChat = attachAssistantCitations(nextChat, activeStackIds.length ? [{
+      sourceTitle: "local.md",
+      content: "Helios Knowledge Hub keeps private documents searchable on this machine.",
+      score: 0.92
+    }] : []);
     setChat(finishAssistantMessage(nextChat));
     setActivity("Idle");
     setBusy(false);
@@ -265,35 +444,48 @@ export default function App() {
         </div>
 
         <nav className="conversation-list" aria-label="Conversations">
-          {sampleConversations.map((conversation) => (
-            <button className="conversation-item active" key={conversation.id}>
+          <button className={view === "chat" ? "conversation-item active" : "conversation-item"} onClick={() => setView("chat")}>
+            <MessageSquare size={16} />
+            <span>Chat</span>
+            <small>{activeStackIds.length ? `${activeStackIds.length} stack active` : "Local session"}</small>
+          </button>
+          <button className={view === "knowledge" ? "conversation-item active" : "conversation-item"} onClick={() => setView("knowledge")}>
+            <BookOpen size={16} />
+            <span>Knowledge Hub</span>
+            <small>{knowledgeStacks.length} stack{knowledgeStacks.length === 1 ? "" : "s"}</small>
+          </button>
+          {view === "chat" ? sampleConversations.map((conversation) => (
+            <button className="conversation-item" key={conversation.id}>
               <MessageSquare size={16} />
               <span>{conversation.title}</span>
               <small>{conversation.meta}</small>
             </button>
-          ))}
+          )) : null}
         </nav>
       </aside>
 
       <section className="workbench">
         <header className="topbar">
           <div>
-            <span className="eyebrow">Default model</span>
-            <h2>{activeModel?.name ?? "No model selected"}</h2>
+            <span className="eyebrow">{view === "chat" ? "Default model" : "Local knowledge"}</span>
+            <h2>{view === "chat" ? activeModel?.name ?? "No model selected" : "Knowledge Hub"}</h2>
           </div>
           <div className="topbar-actions">
             <button className="toolbar-button" onClick={refreshAll} title="Refresh status">
               <RefreshCw size={17} />
               Refresh
             </button>
-            <button className="toolbar-button primary" onClick={handleBuild} disabled={busy || !requiredToolsReady} title="Build EIE">
+            {view === "chat" ? <button className="toolbar-button primary" onClick={handleBuild} disabled={busy || !requiredToolsReady} title="Build EIE">
               <Terminal size={17} />
               Build EIE
-            </button>
+            </button> : <button className="toolbar-button primary" onClick={handleCreateStack} disabled={busy} title="Create stack">
+              <Plus size={17} />
+              New Stack
+            </button>}
           </div>
         </header>
 
-        <div className="main-grid">
+        {view === "chat" ? <div className="main-grid">
           <section className="chat-panel">
             <div className="message-scroll">
               {chat.messages.length === 0 ? (
@@ -308,6 +500,21 @@ export default function App() {
             </div>
 
             <form className="composer" onSubmit={handleSend}>
+              {knowledgeStacks.length ? (
+                <div className="active-stack-row">
+                  <Layers size={15} />
+                  {knowledgeStacks.map((stack) => (
+                    <button
+                      type="button"
+                      className={activeStackIds.includes(stack.id) ? "stack-chip selected" : "stack-chip"}
+                      key={stack.id}
+                      onClick={() => handleToggleActiveStack(stack.id)}
+                    >
+                      {stack.name}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ask Helios..." rows={3} />
               <button className="send-button" disabled={!prompt.trim() || busy} title="Send message">
                 <Send size={18} />
@@ -418,7 +625,31 @@ export default function App() {
 
             <footer className="activity-line">{activity}</footer>
           </aside>
-        </div>
+        </div> : (
+          <KnowledgeHub
+            activity={activity}
+            busy={busy}
+            knowledgeQuery={knowledgeQuery}
+            newStackDescription={newStackDescription}
+            newStackName={newStackName}
+            results={knowledgeResults}
+            selectedStackId={selectedStackId}
+            sources={knowledgeSources}
+            stacks={knowledgeStacks}
+            onAddFiles={handleAddKnowledgeFiles}
+            onAddFolder={handleAddKnowledgeFolder}
+            onCreateStack={handleCreateStack}
+            onQueryChange={setKnowledgeQuery}
+            onReindex={handleReindexStack}
+            onRemoveSource={handleRemoveSource}
+            onSearch={handleKnowledgeSearch}
+            onSelectStack={setSelectedStackId}
+            onStackDescriptionChange={setNewStackDescription}
+            onStackNameChange={setNewStackName}
+            activeStackIds={activeStackIds}
+            onToggleActiveStack={handleToggleActiveStack}
+          />
+        )}
       </section>
     </main>
   );
@@ -429,6 +660,176 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     <article className={`message ${message.role}`}>
       <span>{message.role}</span>
       <p>{message.content}{message.streaming ? <i /> : null}</p>
+      {message.citations?.length ? (
+        <div className="citation-row">
+          {message.citations.map((citation, index) => (
+            <button className="citation-chip" key={`${citation.sourceTitle}-${index}`} title={citation.content}>
+              <FileText size={13} />
+              {citation.sourceTitle}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </article>
+  );
+}
+
+function KnowledgeHub({
+  activeStackIds,
+  activity,
+  busy,
+  knowledgeQuery,
+  newStackDescription,
+  newStackName,
+  results,
+  selectedStackId,
+  sources,
+  stacks,
+  onAddFiles,
+  onAddFolder,
+  onCreateStack,
+  onQueryChange,
+  onReindex,
+  onRemoveSource,
+  onSearch,
+  onSelectStack,
+  onStackDescriptionChange,
+  onStackNameChange,
+  onToggleActiveStack
+}: {
+  activeStackIds: string[];
+  activity: string;
+  busy: boolean;
+  knowledgeQuery: string;
+  newStackDescription: string;
+  newStackName: string;
+  results: KnowledgeSearchResult[];
+  selectedStackId?: string;
+  sources: KnowledgeSource[];
+  stacks: KnowledgeStack[];
+  onAddFiles: () => void;
+  onAddFolder: () => void;
+  onCreateStack: () => void;
+  onQueryChange: (value: string) => void;
+  onReindex: () => void;
+  onRemoveSource: (sourceId: string) => void;
+  onSearch: () => void;
+  onSelectStack: (stackId: string) => void;
+  onStackDescriptionChange: (value: string) => void;
+  onStackNameChange: (value: string) => void;
+  onToggleActiveStack: (stackId: string) => void;
+}) {
+  const selectedStack = stacks.find((stack) => stack.id === selectedStackId);
+
+  return (
+    <div className="knowledge-layout">
+      <aside className="knowledge-sidebar">
+        <section className="stack-create">
+          <input value={newStackName} onChange={(event) => onStackNameChange(event.target.value)} aria-label="Stack name" />
+          <textarea value={newStackDescription} onChange={(event) => onStackDescriptionChange(event.target.value)} aria-label="Stack description" rows={2} />
+          <button className="toolbar-button primary" onClick={onCreateStack} disabled={busy}>
+            <Plus size={16} />
+            Create
+          </button>
+        </section>
+
+        <section className="stack-list" aria-label="Knowledge stacks">
+          {stacks.length === 0 ? (
+            <div className="empty-card">
+              <BookOpen size={22} />
+              <strong>No stacks yet</strong>
+              <span>Create one to start indexing local files.</span>
+            </div>
+          ) : stacks.map((stack) => (
+            <article className={stack.id === selectedStackId ? "stack-card selected" : "stack-card"} key={stack.id}>
+              <button onClick={() => onSelectStack(stack.id)}>
+                <strong>{stack.name}</strong>
+                <span>{stack.indexed_source_count}/{stack.source_count} indexed</span>
+              </button>
+              <button className={activeStackIds.includes(stack.id) ? "mini-toggle selected" : "mini-toggle"} onClick={() => onToggleActiveStack(stack.id)}>
+                {activeStackIds.includes(stack.id) ? "Active" : "Use in chat"}
+              </button>
+            </article>
+          ))}
+        </section>
+      </aside>
+
+      <section className="knowledge-main">
+        <div className="knowledge-header">
+          <div>
+            <span className="eyebrow">Selected stack</span>
+            <h3>{selectedStack?.name ?? "No stack selected"}</h3>
+            <p>{selectedStack?.description || "Create or select a stack to manage sources."}</p>
+          </div>
+          <div className="knowledge-actions">
+            <button className="toolbar-button" onClick={onAddFiles} disabled={busy || !selectedStackId}>
+              <Upload size={16} />
+              Files
+            </button>
+            <button className="toolbar-button" onClick={onAddFolder} disabled={busy || !selectedStackId}>
+              <FolderOpen size={16} />
+              Folder
+            </button>
+            <button className="toolbar-button" onClick={onReindex} disabled={busy || !selectedStackId}>
+              <RefreshCw size={16} />
+              Reindex
+            </button>
+          </div>
+        </div>
+
+        <div className="knowledge-grid">
+          <section className="source-panel">
+            <div className="section-heading">
+              <FileText size={18} />
+              <h3>Sources</h3>
+              <span>{sources.length}</span>
+            </div>
+            <div className="source-list">
+              {sources.length === 0 ? (
+                <div className="empty-card compact">
+                  <span>No sources indexed.</span>
+                </div>
+              ) : sources.map((source) => (
+                <article className={`source-row ${source.status}`} key={source.id}>
+                  <FileText size={16} />
+                  <div>
+                    <strong>{source.title}</strong>
+                    <span>{source.format.toUpperCase()} - {formatSourceStatus(source.status)}</span>
+                    {source.error ? <small>{source.error}</small> : null}
+                  </div>
+                  <button className="icon-button" onClick={() => onRemoveSource(source.id)} title="Remove source">
+                    <Trash2 size={15} />
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="search-panel">
+            <div className="section-heading">
+              <Search size={18} />
+              <h3>Search Test</h3>
+              <span>{results.length}</span>
+            </div>
+            <div className="knowledge-search">
+              <input value={knowledgeQuery} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search this stack..." />
+              <button className="send-button" onClick={onSearch} disabled={!knowledgeQuery.trim() || !selectedStackId}>
+                <Search size={17} />
+              </button>
+            </div>
+            <div className="result-list">
+              {results.map((result, index) => (
+                <article className="result-card" key={result.chunk_id}>
+                  <span>[{index + 1}] {result.source_title} - {(result.score * 100).toFixed(0)}%</span>
+                  <p>{result.content}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <footer className="activity-line">{activity}</footer>
+      </section>
+    </div>
   );
 }
