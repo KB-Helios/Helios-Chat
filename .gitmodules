@@ -1,0 +1,3 @@
+[submodule "vendor/eie/llama.cpp"]
+	path = vendor/eie/llama.cpp
+	url = https://github.com/TheTom/llama-cpp-turboquant.git
