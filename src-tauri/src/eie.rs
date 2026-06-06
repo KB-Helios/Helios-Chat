@@ -131,10 +131,10 @@ pub fn render_eie_config(input: &EieConfigInput) -> String {
 
     if let (Some(alias), Some(path)) = (&input.default_model_alias, &input.default_model_path) {
         yaml.push_str("models:\n");
-        yaml.push_str(&format!("  {}: {}\n", alias, normalize_path(path)));
+        yaml.push_str("models:\n");
+        yaml.push_str(&format!("  \"{}\": \"{}\"\n", alias, normalize_path(path)));
         yaml.push_str("warm_load:\n");
-        yaml.push_str(&format!("  default_model: {}\n", alias));
-        yaml.push_str("  idle_unload: smart\n");
+        yaml.push_str(&format!("  default_model: \"{}\"\n", alias));
     }
 
     yaml
