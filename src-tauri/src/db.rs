@@ -10,6 +10,7 @@ pub fn migrate(path: &Path) -> anyhow::Result<()> {
     connection.execute_batch(
         r#"
         PRAGMA journal_mode = WAL;
+        PRAGMA foreign_keys = ON;
 
         CREATE TABLE IF NOT EXISTS conversations (
             id TEXT PRIMARY KEY,
