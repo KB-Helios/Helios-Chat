@@ -1,0 +1,8 @@
+node_modules/
+dist/
+src-tauri/target/
+.codex-eie-*-build/
+vendor/eie/build*/
+vendor/eie/llama.cpp/build*/
+*.log
+.codex-local/
