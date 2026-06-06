@@ -32,7 +32,7 @@ pub async fn setup_build_eie(app: AppHandle) -> Result<BuildResult, String> {
         BuildBackend::Cpu => "cpu",
         BuildBackend::Blocked => "blocked",
     };
-    let binary_path = paths.engine.join("eie-server.exe");
+    let binary_path = paths.engine.join(format!("eie-server{}", std::env::consts::EXE_SUFFIX));
     let source_dir = vendor_eie_dir();
     if !source_dir.join("CMakeLists.txt").exists() {
         return Err(format!("Vendored EIE source not found at {}", source_dir.display()));
