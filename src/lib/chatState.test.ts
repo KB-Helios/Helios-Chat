@@ -35,4 +35,50 @@ describe("chat state", () => {
 
     assert.equal(cited.messages[0].citations?.[0].sourceTitle, "local.md");
   });
+
+  it("returns state unchanged when no active assistant message exists", () => {
+    const state = createInitialChatState("Qwen3 4B");
+    const result = attachAssistantCitations(state, [
+      { sourceTitle: "x.md", content: "text", score: 0.8 }
+    ]);
+    assert.strictEqual(result, state);
+  });
+
+  it("returns state unchanged when citations array is empty", () => {
+    const initial = createInitialChatState("Qwen3 4B");
+    const withDraft = startAssistantMessage(initial, "chatcmpl-empty");
+    const result = attachAssistantCitations(withDraft, []);
+    assert.strictEqual(result, withDraft);
+  });
+
+  it("replaces citations when attachAssistantCitations is called a second time", () => {
+    const initial = createInitialChatState("Qwen3 4B");
+    const withDraft = startAssistantMessage(initial, "chatcmpl-2");
+    const firstCited = attachAssistantCitations(withDraft, [
+      { sourceTitle: "first.md", content: "first content", score: 0.7 }
+    ]);
+    const secondCited = attachAssistantCitations(firstCited, [
+      { sourceTitle: "second.md", content: "second content", score: 0.9 }
+    ]);
+
+    assert.equal(secondCited.messages[0].citations?.length, 1);
+    assert.equal(secondCited.messages[0].citations?.[0].sourceTitle, "second.md");
+  });
+
+  it("does not add citations to non-active messages", () => {
+    const initial = createInitialChatState("Qwen3 4B");
+    const withUser = {
+      ...initial,
+      messages: [
+        { id: "user-1", role: "user" as const, content: "hello", createdAt: new Date().toISOString() }
+      ]
+    };
+    const withDraft = startAssistantMessage(withUser, "chatcmpl-3");
+    const cited = attachAssistantCitations(withDraft, [
+      { sourceTitle: "doc.txt", content: "content", score: 0.85 }
+    ]);
+
+    const userMsg = cited.messages.find((m) => m.id === "user-1");
+    assert.equal(userMsg?.citations, undefined);
+  });
 });

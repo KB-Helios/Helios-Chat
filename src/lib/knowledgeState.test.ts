@@ -26,4 +26,26 @@ describe("knowledge state", () => {
       }
     });
   });
+
+  it("preserves all stack ids when building chat fields with multiple stacks", () => {
+    const result = buildKnowledgeChatFields(["stack-a", "stack-b", "stack-c"]);
+    assert.deepEqual(result.knowledge_stack_ids, ["stack-a", "stack-b", "stack-c"]);
+    assert.equal(result.retrieval_options?.top_k, 6);
+  });
+
+  it("preserves insertion order when toggling multiple stacks", () => {
+    const after1 = toggleStackSelection([], "stack-z");
+    const after2 = toggleStackSelection(after1, "stack-a");
+    const after3 = toggleStackSelection(after2, "stack-m");
+    assert.deepEqual(after3, ["stack-z", "stack-a", "stack-m"]);
+  });
+
+  it("formatSourceStatus capitalises first letter of unknown status", () => {
+    assert.equal(formatSourceStatus("processing"), "Processing");
+    assert.equal(formatSourceStatus("queued"), "Queued");
+  });
+
+  it("formatSourceStatus returns Unknown for empty string", () => {
+    assert.equal(formatSourceStatus(""), "Unknown");
+  });
 });
