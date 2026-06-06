@@ -8,7 +8,7 @@ use crate::setup::{self, BuildBackend, ToolStatus};
 use crate::RuntimeState;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use tauri::{AppHandle, Emitter, State};
 
 #[tauri::command]
@@ -32,14 +32,22 @@ pub async fn setup_build_eie(app: AppHandle) -> Result<BuildResult, String> {
         BuildBackend::Cpu => "cpu",
         BuildBackend::Blocked => "blocked",
     };
-    let binary_path = paths.engine.join(format!("eie-server{}", std::env::consts::EXE_SUFFIX));
+    let binary_path = paths
+        .engine
+        .join(format!("eie-server{}", std::env::consts::EXE_SUFFIX));
     let source_dir = vendor_eie_dir();
     if !source_dir.join("CMakeLists.txt").exists() {
-        return Err(format!("Vendored EIE source not found at {}", source_dir.display()));
+        return Err(format!(
+            "Vendored EIE source not found at {}",
+            source_dir.display()
+        ));
     }
     let build_dir = paths.engine.join(format!("build-{}", backend_name));
 
-    let _ = app.emit("setup:progress", format!("Configuring EIE {}", backend_name));
+    let _ = app.emit(
+        "setup:progress",
+        format!("Configuring EIE {}", backend_name),
+    );
     let mut configure_args = vec![
         "-S".to_string(),
         source_dir.display().to_string(),
@@ -50,11 +58,16 @@ pub async fn setup_build_eie(app: AppHandle) -> Result<BuildResult, String> {
     if backend == BuildBackend::Cuda {
         configure_args.push("-DGGML_CUDA=ON".to_string());
     }
-    run_logged("cmake", &configure_args, &log_path).map_err(to_string)?;
+    let cmake_path = tools
+        .iter()
+        .find(|tool| tool.name == "cmake")
+        .and_then(|tool| tool.path.as_deref())
+        .unwrap_or("cmake");
+    run_logged(cmake_path, &configure_args, &log_path).map_err(to_string)?;
 
     let _ = app.emit("setup:progress", "Building EIE");
     run_logged(
-        "cmake",
+        cmake_path,
         &[
             "--build".to_string(),
             build_dir.display().to_string(),
@@ -65,10 +78,17 @@ pub async fn setup_build_eie(app: AppHandle) -> Result<BuildResult, String> {
     )
     .map_err(to_string)?;
 
-    let built = find_eie_binary(&build_dir)
-        .ok_or_else(|| format!("EIE build completed but no eie-server binary was found in {}", build_dir.display()))?;
+    let built = find_eie_binary(&build_dir).ok_or_else(|| {
+        format!(
+            "EIE build completed but no eie-server binary was found in {}",
+            build_dir.display()
+        )
+    })?;
     std::fs::copy(&built, &binary_path).map_err(to_string)?;
-    let _ = app.emit("setup:progress", format!("EIE ready at {}", binary_path.display()));
+    let _ = app.emit(
+        "setup:progress",
+        format!("EIE ready at {}", binary_path.display()),
+    );
 
     Ok(BuildResult {
         backend: backend_name.to_string(),
@@ -78,16 +98,24 @@ pub async fn setup_build_eie(app: AppHandle) -> Result<BuildResult, String> {
 }
 
 #[tauri::command]
-pub async fn engine_start(app: AppHandle, state: State<'_, RuntimeState>) -> Result<EngineStatus, String> {
+pub async fn engine_start(
+    app: AppHandle,
+    state: State<'_, RuntimeState>,
+) -> Result<EngineStatus, String> {
     let paths = AppPaths::resolve(&app).map_err(to_string)?;
     paths.ensure().map_err(to_string)?;
     db::migrate(&paths.database).map_err(to_string)?;
     let settings = load_settings(&paths.settings).map_err(to_string)?;
-    let default_model_path = default_model_path(&settings, &paths);
-    let input = eie::config_input_from_settings(&settings, paths.models.clone(), default_model_path);
+    let input = eie::config_input_from_settings(
+        &settings,
+        paths.models.clone(),
+        catalog_model_paths(&paths),
+    );
     eie::write_eie_config(&paths.eie_config, &input).map_err(to_string)?;
 
-    let binary_path = paths.engine.join("eie-server.exe");
+    let binary_path = paths
+        .engine
+        .join(format!("eie-server{}", std::env::consts::EXE_SUFFIX));
     if !binary_path.exists() {
         return Err(format!(
             "EIE binary not found at {}. Run first-run setup before starting the engine.",
@@ -96,7 +124,10 @@ pub async fn engine_start(app: AppHandle, state: State<'_, RuntimeState>) -> Res
     }
 
     let status = {
-        let mut runtime = state.engine.lock().map_err(|_| "engine lock poisoned".to_string())?;
+        let mut runtime = state
+            .engine
+            .lock()
+            .map_err(|_| "engine lock poisoned".to_string())?;
         runtime
             .start(&binary_path, &paths.eie_config, settings.engine_port)
             .map_err(to_string)?
@@ -109,7 +140,10 @@ pub async fn engine_start(app: AppHandle, state: State<'_, RuntimeState>) -> Res
 pub fn engine_stop(app: AppHandle, state: State<'_, RuntimeState>) -> Result<EngineStatus, String> {
     let settings = settings_for_app(&app)?;
     let status = {
-        let mut runtime = state.engine.lock().map_err(|_| "engine lock poisoned".to_string())?;
+        let mut runtime = state
+            .engine
+            .lock()
+            .map_err(|_| "engine lock poisoned".to_string())?;
         runtime.stop().map_err(to_string)?;
         runtime.status(settings.engine_port)
     };
@@ -118,9 +152,15 @@ pub fn engine_stop(app: AppHandle, state: State<'_, RuntimeState>) -> Result<Eng
 }
 
 #[tauri::command]
-pub fn engine_status(app: AppHandle, state: State<'_, RuntimeState>) -> Result<EngineStatus, String> {
+pub fn engine_status(
+    app: AppHandle,
+    state: State<'_, RuntimeState>,
+) -> Result<EngineStatus, String> {
     let settings = settings_for_app(&app)?;
-    let runtime = state.engine.lock().map_err(|_| "engine lock poisoned".to_string())?;
+    let mut runtime = state
+        .engine
+        .lock()
+        .map_err(|_| "engine lock poisoned".to_string())?;
     Ok(runtime.status(settings.engine_port))
 }
 
@@ -173,7 +213,11 @@ pub fn models_set_default(app: AppHandle, model_id: String) -> Result<HeliosSett
 }
 
 #[tauri::command]
-pub async fn models_load(app: AppHandle, state: State<'_, RuntimeState>, model_id: String) -> Result<(), String> {
+pub async fn models_load(
+    app: AppHandle,
+    state: State<'_, RuntimeState>,
+    model_id: String,
+) -> Result<(), String> {
     let status = engine_status(app.clone(), state)?;
     if !status.running {
         return Err("Start EIE before loading a model.".to_string());
@@ -192,7 +236,11 @@ pub async fn models_load(app: AppHandle, state: State<'_, RuntimeState>, model_i
 }
 
 #[tauri::command]
-pub async fn models_unload(app: AppHandle, state: State<'_, RuntimeState>, model_id: String) -> Result<(), String> {
+pub async fn models_unload(
+    app: AppHandle,
+    state: State<'_, RuntimeState>,
+    model_id: String,
+) -> Result<(), String> {
     let status = engine_status(app, state)?;
     if !status.running {
         return Err("EIE is not running.".to_string());
@@ -209,10 +257,17 @@ pub async fn models_unload(app: AppHandle, state: State<'_, RuntimeState>, model
 }
 
 #[tauri::command]
-pub async fn chat_send(app: AppHandle, state: State<'_, RuntimeState>, request: ChatRequest) -> Result<ChatResponse, String> {
+pub async fn chat_send(
+    app: AppHandle,
+    state: State<'_, RuntimeState>,
+    request: ChatRequest,
+) -> Result<ChatResponse, String> {
     let settings = settings_for_app(&app)?;
     let status = {
-        let runtime = state.engine.lock().map_err(|_| "engine lock poisoned".to_string())?;
+        let mut runtime = state
+            .engine
+            .lock()
+            .map_err(|_| "engine lock poisoned".to_string())?;
         runtime.status(settings.engine_port)
     };
     if !status.running {
@@ -249,11 +304,12 @@ fn settings_for_app(app: &AppHandle) -> Result<HeliosSettings, String> {
     load_settings(&paths.settings).map_err(to_string)
 }
 
-fn default_model_path(settings: &HeliosSettings, paths: &AppPaths) -> Option<PathBuf> {
-    let catalog = load_builtin_catalog().ok()?;
-    let by_id = catalog_by_id(&catalog);
-    let model_id = settings.default_model_id.as_ref()?;
-    by_id.get(model_id).map(|model| paths.models.join(&model.hf_file))
+fn catalog_model_paths(paths: &AppPaths) -> Vec<(String, PathBuf)> {
+    load_builtin_catalog()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|model| (model.id, paths.models.join(model.hf_file)))
+        .collect()
 }
 
 fn to_string(error: impl std::fmt::Display) -> String {
@@ -261,7 +317,10 @@ fn to_string(error: impl std::fmt::Display) -> String {
 }
 
 fn vendor_eie_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("vendor").join("eie")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("vendor")
+        .join("eie")
 }
 
 fn run_logged(program: &str, args: &[String], log_path: &std::path::Path) -> anyhow::Result<()> {
@@ -269,19 +328,21 @@ fn run_logged(program: &str, args: &[String], log_path: &std::path::Path) -> any
         std::fs::create_dir_all(parent)?;
     }
 
-    let output = Command::new(program).args(args).output()?;
-    let mut log = String::new();
-    log.push_str(&format!("$ {} {}\n", program, args.join(" ")));
-    log.push_str(&String::from_utf8_lossy(&output.stdout));
-    log.push_str(&String::from_utf8_lossy(&output.stderr));
-    log.push('\n');
-    std::fs::OpenOptions::new()
+    let mut log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(log_path)?
-        .write_all(log.as_bytes())?;
+        .open(log_path)?;
 
-    if !output.status.success() {
+    writeln!(log_file, "$ {} {}", program, args.join(" "))?;
+    let stdout_file = log_file.try_clone()?;
+    let stderr_file = log_file.try_clone()?;
+    let status = Command::new(program)
+        .args(args)
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file))
+        .status()?;
+
+    if !status.success() {
         anyhow::bail!("{} failed; see {}", program, log_path.display());
     }
     Ok(())
@@ -294,7 +355,9 @@ fn find_eie_binary(build_dir: &std::path::Path) -> Option<PathBuf> {
         build_dir.join("eie-server.exe"),
         build_dir.join("eie-server"),
         build_dir.join("bin").join("Release").join("eie-server.exe"),
+        build_dir.join("bin").join("Release").join("eie-server"),
         build_dir.join("bin").join("eie-server.exe"),
+        build_dir.join("bin").join("eie-server"),
     ];
     candidates.into_iter().find(|path| path.exists())
 }

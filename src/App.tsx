@@ -20,6 +20,7 @@ import {
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   defaultSettings,
+  chatSend,
   engineStart,
   engineStatus,
   engineStop,
@@ -188,13 +189,49 @@ export default function App() {
     setBusy(true);
     setActivity("Generating");
     const assistantId = crypto.randomUUID();
-    let nextChat = startAssistantMessage(addUserMessage(chat, trimmed), assistantId);
+    const userChat = addUserMessage(chat, trimmed);
+    let nextChat = startAssistantMessage(userChat, assistantId);
     setChat(nextChat);
 
-    const tokens = isTauriRuntime()
-      ? ["EIE streaming is active from the desktop runtime."]
-      : ["EIE ", "is ", "wired ", "as ", "the ", "default ", "local ", "engine. ", "Complete ", "first-run ", "setup ", "to ", "replace ", "this ", "browser ", "preview ", "with ", "real ", "model ", "tokens."];
+    if (isTauriRuntime()) {
+      let receivedToken = false;
+      const { listen } = await import("@tauri-apps/api/event");
+      const unlistenToken = await listen<string>("chat:token", (event) => {
+        receivedToken = true;
+        nextChat = appendAssistantToken(nextChat, String(event.payload ?? ""));
+        setChat(nextChat);
+      });
+      const unlistenDone = await listen<string>("chat:done", () => {
+        setActivity("Idle");
+      });
 
+      try {
+        const response = await chatSend({
+          model: activeModel?.id ?? settings.default_model_id ?? defaultSettings.default_model_id ?? "qwen3-4b-q4-k-m",
+          messages: userChat.messages.map((message) => ({ role: message.role, content: message.content })),
+          temperature: settings.temperature,
+          top_p: settings.top_p,
+          max_tokens: settings.max_tokens
+        });
+        if (!receivedToken && response.content) {
+          nextChat = appendAssistantToken(nextChat, response.content);
+          setChat(nextChat);
+        }
+        setChat(finishAssistantMessage(nextChat));
+        setActivity("Idle");
+      } catch (error) {
+        nextChat = appendAssistantToken(nextChat, error instanceof Error ? error.message : String(error));
+        setChat(finishAssistantMessage(nextChat));
+        setActivity(error instanceof Error ? error.message : String(error));
+      } finally {
+        unlistenToken();
+        unlistenDone();
+        setBusy(false);
+      }
+      return;
+    }
+
+    const tokens = ["EIE ", "is ", "wired ", "as ", "the ", "default ", "local ", "engine. ", "Complete ", "first-run ", "setup ", "to ", "replace ", "this ", "browser ", "preview ", "with ", "real ", "model ", "tokens."];
     for (const token of tokens) {
       await new Promise((resolve) => window.setTimeout(resolve, 45));
       nextChat = appendAssistantToken(nextChat, token);

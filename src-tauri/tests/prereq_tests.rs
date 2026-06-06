@@ -1,4 +1,6 @@
-use helios_chat_lib::setup::{choose_build_backend, detect_prereq_from_path, BuildBackend, ToolStatus};
+use helios_chat_lib::setup::{
+    choose_build_backend, detect_prereq_from_path, BuildBackend, ToolStatus,
+};
 
 #[test]
 fn chooses_cuda_when_compiler_and_cuda_are_available() {

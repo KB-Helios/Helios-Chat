@@ -101,5 +101,6 @@ pub fn install_url_for(name: &str) -> &'static str {
 }
 
 fn cuda_path_hint() -> Option<PathBuf> {
-    std::env::var_os("CUDA_PATH").map(|path| PathBuf::from(path).join("bin").join("nvcc.exe"))
+    let binary_name = if cfg!(windows) { "nvcc.exe" } else { "nvcc" };
+    std::env::var_os("CUDA_PATH").map(|path| PathBuf::from(path).join("bin").join(binary_name))
 }

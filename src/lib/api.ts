@@ -38,6 +38,11 @@ export interface ChatPayload {
   max_tokens: number;
 }
 
+export interface ChatResponse {
+  conversation_id: string;
+  content: string;
+}
+
 export interface BuildResult {
   backend: string;
   binary_path: string;
@@ -117,6 +122,10 @@ export async function modelsUnload(modelId: string): Promise<void> {
   return invokeCommand<void>("models_unload", { modelId });
 }
 
+export async function chatSend(request: ChatPayload): Promise<ChatResponse> {
+  return invokeCommand<ChatResponse>("chat_send", { request });
+}
+
 export async function settingsGet(): Promise<HeliosSettings> {
   return invokeCommand<HeliosSettings>("settings_get");
 }
@@ -164,6 +173,11 @@ async function mockInvoke<T>(command: string, args?: Record<string, unknown>): P
     case "models_load":
     case "models_unload":
       return undefined as T;
+    case "chat_send":
+      return {
+        conversation_id: String(args?.conversation_id ?? crypto.randomUUID()),
+        content: "EIE is wired as the default local engine. Complete first-run setup to replace this browser preview with real model tokens."
+      } as T;
     case "models_set_default":
     case "settings_update":
       return { ...defaultSettings, ...(args?.settings as object), default_model_id: (args?.modelId as string) ?? defaultSettings.default_model_id } as T;

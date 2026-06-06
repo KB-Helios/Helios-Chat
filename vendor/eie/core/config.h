@@ -26,6 +26,17 @@ struct ServerConfig {
     std::string log_level = "info";
 };
 
+inline std::string trimConfigValue(std::string val) {
+    auto first = val.find_first_not_of(" \t");
+    if (first == std::string::npos) return "";
+    val.erase(0, first);
+    val.erase(val.find_last_not_of(" \t\r\n") + 1);
+    if (val.size() >= 2 && val.front() == '"' && val.back() == '"') {
+        val = val.substr(1, val.size() - 2);
+    }
+    return val;
+}
+
 // Simple key:value parser — replace with yaml-cpp for production
 inline ServerConfig loadConfig(const std::string& path) {
     ServerConfig cfg;
@@ -35,18 +46,30 @@ inline ServerConfig loadConfig(const std::string& path) {
         return cfg;
     }
     std::string line;
+    std::string section;
     while (std::getline(f, line)) {
-        line.erase(0, line.find_first_not_of(" \t"));
-        if (line.empty() || line[0] == '#') continue;
         auto c = line.find('#');
         if (c != std::string::npos) line = line.substr(0, c);
+        bool nested = !line.empty() && (line[0] == ' ' || line[0] == '\t');
+        line.erase(0, line.find_first_not_of(" \t"));
+        if (line.empty()) continue;
         auto colon = line.find(':');
         if (colon == std::string::npos) continue;
         std::string key = line.substr(0, colon);
         std::string val = line.substr(colon + 1);
-        key.erase(key.find_last_not_of(" \t") + 1);
-        val.erase(0, val.find_first_not_of(" \t"));
-        val.erase(val.find_last_not_of(" \t\r\n") + 1);
+        key = trimConfigValue(key);
+        val = trimConfigValue(val);
+
+        if (!nested && val.empty()) {
+            section = key;
+            continue;
+        }
+        if (!nested) section.clear();
+
+        if (section == "models") {
+            cfg.models[key] = val;
+            continue;
+        }
 
         if (key == "host") cfg.host = val;
         else if (key == "port") cfg.port = std::stoi(val);

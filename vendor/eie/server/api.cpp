@@ -13,9 +13,9 @@
 #include <thread>
 #include <chrono>
 
-// If httplib available (from llama.cpp vendor):
-// #include "httplib.h"
-// #define HAS_HTTPLIB 1
+#if defined(HAS_HTTPLIB) && HAS_HTTPLIB
+#include "httplib.h"
+#endif
 
 namespace eie {
 
@@ -79,6 +79,38 @@ static std::string modelsJson(const std::vector<std::string>& list) {
     return ss.str();
 }
 
+static std::string extractJsonString(const std::string& body, const std::string& key) {
+    const std::string needle = "\"" + key + "\"";
+    auto key_pos = body.find(needle);
+    if (key_pos == std::string::npos) return "";
+    auto colon = body.find(':', key_pos + needle.size());
+    if (colon == std::string::npos) return "";
+    auto first_quote = body.find('"', colon + 1);
+    if (first_quote == std::string::npos) return "";
+    std::string value;
+    bool escaped = false;
+    for (size_t i = first_quote + 1; i < body.size(); ++i) {
+        char c = body[i];
+        if (escaped) {
+            switch (c) {
+                case 'n': value += '\n'; break;
+                case 'r': value += '\r'; break;
+                case 't': value += '\t'; break;
+                default: value += c; break;
+            }
+            escaped = false;
+            continue;
+        }
+        if (c == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (c == '"') return value;
+        value += c;
+    }
+    return "";
+}
+
 // ═══════════════════════════════════════════
 // Server Implementation
 // ═══════════════════════════════════════════
@@ -96,9 +128,8 @@ void startServer(const ServerConfig& cfg, ModelManager& models,
 
     // POST /v1/chat/completions
     svr.Post("/v1/chat/completions", [&](const httplib::Request& req, httplib::Response& res) {
-        // TODO: parse JSON body for model, messages, temperature, max_tokens
-        // For now: extract model name, concatenate messages as prompt
-        std::string model = "default";
+        std::string model = extractJsonString(req.body, "model");
+        if (model.empty()) model = "default";
         std::string prompt = req.body; // simplified
         SamplingParams sp;
 
@@ -171,6 +202,32 @@ void startServer(const ServerConfig& cfg, ModelManager& models,
     // GET /v1/admin/models/discover
     svr.Get("/v1/admin/models/discover", [&](const httplib::Request&, httplib::Response& res) {
         res.set_content(modelsJson(models.available()), "application/json");
+    });
+
+    svr.Post("/v1/admin/models/load", [&](const httplib::Request& req, httplib::Response& res) {
+        std::string model = extractJsonString(req.body, "model");
+        if (model.empty()) {
+            res.status = 400;
+            res.set_content("{\"error\":\"missing model\"}", "application/json");
+            return;
+        }
+        if (!models.load(model, cfg.default_kv)) {
+            res.status = 404;
+            res.set_content("{\"error\":\"model not found or failed to load\"}", "application/json");
+            return;
+        }
+        res.set_content("{\"status\":\"loaded\"}", "application/json");
+    });
+
+    svr.Post("/v1/admin/models/unload", [&](const httplib::Request& req, httplib::Response& res) {
+        std::string model = extractJsonString(req.body, "model");
+        if (model.empty()) {
+            res.status = 400;
+            res.set_content("{\"error\":\"missing model\"}", "application/json");
+            return;
+        }
+        models.unloadModel(model);
+        res.set_content("{\"status\":\"unloaded\"}", "application/json");
     });
 
     // GET /v1/admin/vram/status

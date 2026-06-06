@@ -50,13 +50,22 @@ pub async fn download_with_resume(
     }
 
     let response = request.send().await?.error_for_status()?;
-    let total = response.content_length().map(|length| length + existing);
+    let is_partial = existing > 0 && response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    let total = response.content_length().map(|length| {
+        if is_partial {
+            length + existing
+        } else {
+            length
+        }
+    });
     let mut stream = response.bytes_stream();
     let mut file = std::fs::OpenOptions::new()
+        .write(true)
         .create(true)
-        .append(true)
+        .append(is_partial)
+        .truncate(!is_partial)
         .open(&partial)?;
-    let mut downloaded = existing;
+    let mut downloaded = if is_partial { existing } else { 0 };
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;

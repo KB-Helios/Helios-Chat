@@ -33,7 +33,13 @@ impl AppPaths {
     }
 
     pub fn ensure(&self) -> anyhow::Result<()> {
-        for path in [&self.root, &self.models, &self.downloads, &self.engine, &self.logs] {
+        for path in [
+            &self.root,
+            &self.models,
+            &self.downloads,
+            &self.engine,
+            &self.logs,
+        ] {
             std::fs::create_dir_all(path)?;
         }
         Ok(())

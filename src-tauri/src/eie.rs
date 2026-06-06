@@ -10,8 +10,8 @@ pub struct EieConfigInput {
     pub host: String,
     pub port: u16,
     pub model_dir: PathBuf,
+    pub models: Vec<(String, PathBuf)>,
     pub default_model_alias: Option<String>,
-    pub default_model_path: Option<PathBuf>,
     pub n_ctx: u32,
     pub type_k: String,
     pub type_v: String,
@@ -63,7 +63,17 @@ pub struct EngineRuntime {
 }
 
 impl EngineRuntime {
-    pub fn status(&self, default_port: u16) -> EngineStatus {
+    pub fn status(&mut self, default_port: u16) -> EngineStatus {
+        let exited = match self.child.as_mut() {
+            Some(child) => matches!(child.try_wait(), Ok(Some(_))),
+            None => false,
+        };
+        if exited {
+            self.child = None;
+            self.pid = None;
+            self.endpoint = None;
+        }
+
         let endpoint = self
             .endpoint
             .clone()
@@ -83,6 +93,7 @@ impl EngineRuntime {
     pub fn stop(&mut self) -> anyhow::Result<()> {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
+            let _ = child.wait();
         }
         self.pid = None;
         self.endpoint = None;
@@ -119,7 +130,7 @@ impl EngineRuntime {
 pub fn render_eie_config(input: &EieConfigInput) -> String {
     let model_dir = normalize_path(&input.model_dir);
     let mut yaml = format!(
-        "host: {host}\nport: {port}\nstrategy: generic\nmodel_dir: {model_dir}\nauto_discover: true\ntype_k: {type_k}\ntype_v: {type_v}\nflash_attn: true\nn_ctx: {n_ctx}\nn_gpu_layers: {n_gpu_layers}\nreserve_mb: 512\nlog_level: info\n",
+        "host: {host}\nport: {port}\nstrategy: generic\nmodel_dir: \"{model_dir}\"\nauto_discover: true\ntype_k: {type_k}\ntype_v: {type_v}\nflash_attn: true\nn_ctx: {n_ctx}\nn_gpu_layers: {n_gpu_layers}\nreserve_mb: 512\nlog_level: info\n",
         host = input.host,
         port = input.port,
         model_dir = model_dir,
@@ -129,10 +140,14 @@ pub fn render_eie_config(input: &EieConfigInput) -> String {
         n_gpu_layers = input.n_gpu_layers,
     );
 
-    if let (Some(alias), Some(path)) = (&input.default_model_alias, &input.default_model_path) {
+    if !input.models.is_empty() {
         yaml.push_str("models:\n");
-        yaml.push_str("models:\n");
-        yaml.push_str(&format!("  \"{}\": \"{}\"\n", alias, normalize_path(path)));
+        for (alias, path) in &input.models {
+            yaml.push_str(&format!("  \"{}\": \"{}\"\n", alias, normalize_path(path)));
+        }
+    }
+
+    if let Some(alias) = &input.default_model_alias {
         yaml.push_str("warm_load:\n");
         yaml.push_str(&format!("  default_model: \"{}\"\n", alias));
     }
@@ -163,7 +178,7 @@ pub async fn send_chat_request(
             "temperature": request.temperature,
             "top_p": request.top_p,
             "max_tokens": request.max_tokens,
-            "stream": true
+            "stream": false
         }))
         .send()
         .await?
@@ -184,6 +199,16 @@ pub async fn send_chat_request(
             }
         }
     }
+    if let Some(token) = parse_sse_line(&buffer) {
+        content.push_str(&token);
+        let _ = app.emit("chat:token", &token);
+    }
+    if content.is_empty() {
+        if let Some(message) = parse_chat_json(&buffer) {
+            content.push_str(&message);
+            let _ = app.emit("chat:token", &message);
+        }
+    }
 
     if content.is_empty() {
         anyhow::bail!("EIE returned an empty response");
@@ -202,14 +227,14 @@ pub async fn send_chat_request(
 pub fn config_input_from_settings(
     settings: &HeliosSettings,
     model_dir: PathBuf,
-    default_model_path: Option<PathBuf>,
+    catalog_models: Vec<(String, PathBuf)>,
 ) -> EieConfigInput {
     EieConfigInput {
         host: "127.0.0.1".to_string(),
         port: settings.engine_port,
         model_dir,
+        models: catalog_models,
         default_model_alias: settings.default_model_id.clone(),
-        default_model_path,
         n_ctx: settings.n_ctx,
         type_k: settings.kv_type_k.clone(),
         type_v: settings.kv_type_v.clone(),
@@ -217,18 +242,24 @@ pub fn config_input_from_settings(
     }
 }
 
-fn parse_sse_tokens(text: &str) -> Vec<String> {
-    text.lines()
-        .filter_map(|line| line.strip_prefix("data: "))
-        .filter(|line| *line != "[DONE]")
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter_map(|value| {
-            value
-                .pointer("/choices/0/delta/content")
-                .and_then(|token| token.as_str())
-                .map(ToString::to_string)
-        })
-        .collect()
+fn parse_sse_line(line: &str) -> Option<String> {
+    let data = line.trim().strip_prefix("data: ")?;
+    if data == "[DONE]" {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(data).ok()?;
+    value
+        .pointer("/choices/0/delta/content")
+        .and_then(|token| token.as_str())
+        .map(ToString::to_string)
+}
+
+fn parse_chat_json(text: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(text.trim()).ok()?;
+    value
+        .pointer("/choices/0/message/content")
+        .and_then(|message| message.as_str())
+        .map(ToString::to_string)
 }
 
 fn normalize_path(path: &Path) -> String {

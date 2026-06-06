@@ -25,6 +25,11 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/llama.cpp/include")
     target_link_libraries(eie-server PRIVATE llama ggml common)
 endif()
 
+if(EXISTS "${CMAKE_SOURCE_DIR}/llama.cpp/vendor/cpp-httplib/httplib.h")
+    target_include_directories(eie-server PRIVATE llama.cpp/vendor/cpp-httplib)
+    target_compile_definitions(eie-server PRIVATE HAS_HTTPLIB=1)
+endif()
+
 target_link_libraries(eie-server PRIVATE pthread)
 
 if(GGML_CUDA)
