@@ -171,12 +171,17 @@ pub async fn send_chat_request(
 
     let mut content = String::new();
     let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
-        let text = String::from_utf8_lossy(&chunk);
-        for token in parse_sse_tokens(&text) {
-            content.push_str(&token);
-            let _ = app.emit("chat:token", &token);
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(newline_idx) = buffer.find('\n') {
+            let line: String = buffer.drain(..=newline_idx).collect();
+            if let Some(token) = parse_sse_line(&line) {
+                content.push_str(&token);
+                let _ = app.emit("chat:token", &token);
+            }
         }
     }
 
