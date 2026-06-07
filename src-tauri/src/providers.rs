@@ -185,7 +185,10 @@ async fn send_openai_compatible(
     key: &str,
     request: &ChatRequest,
 ) -> anyhow::Result<ChatResponse> {
-    let response = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+    let response = client
         .post(url)
         .bearer_auth(key)
         .json(&serde_json::json!({
@@ -246,7 +249,10 @@ async fn send_anthropic(key: &str, request: &ChatRequest) -> anyhow::Result<Chat
         body["system"] = serde_json::Value::String(system);
     }
 
-    let response = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+    let response = client
         .post("https://api.anthropic.com/v1/messages")
         .header("x-api-key", key)
         .header("anthropic-version", "2023-06-01")
@@ -310,7 +316,10 @@ async fn send_google(key: &str, request: &ChatRequest) -> anyhow::Result<ChatRes
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
         request.model, key
     );
-    let response = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+    let response = client
         .post(url)
         .json(&body)
         .send()

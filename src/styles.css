@@ -131,6 +131,19 @@ h1 {
   cursor: pointer;
 }
 
+.new-chat-button:focus,
+.drawer-tabs button:focus,
+.split-actions button:focus,
+.preset-card button:focus,
+.send-button:focus,
+.icon-button:focus,
+.mini-icon:focus,
+.import-button:focus,
+.conversation-item:focus {
+  outline: 2px solid #e8b85d;
+  outline-offset: 2px;
+}
+
 .new-chat-button {
   justify-content: center;
   gap: 8px;
@@ -167,8 +180,12 @@ h1 {
 .search-box input {
   flex: 1;
   border: 0;
-  outline: 0;
   background: transparent;
+}
+
+.search-box input:focus-visible {
+  outline: 2px solid #e8b85d;
+  outline-offset: 2px;
 }
 
 .conversation-list {
@@ -253,6 +270,15 @@ h1 {
   padding: 0 10px;
   color: #f3f0ea;
   text-transform: none;
+}
+
+.selector-group select:focus,
+.settings-list input:focus,
+.settings-list textarea:focus,
+.provider-card input:focus,
+.composer textarea:focus {
+  outline: 2px solid #e8b85d;
+  outline-offset: 2px;
 }
 
 .engine-pill {
@@ -401,6 +427,13 @@ h1 {
   border-color: #e0a33f;
   background: #2f291d;
   color: #f1bd5d;
+}
+
+.stack-chip:focus,
+.citation-chip:focus,
+.mini-toggle:focus {
+  outline: 2px solid #e8b85d;
+  outline-offset: 2px;
 }
 
 .composer {
@@ -663,6 +696,13 @@ button:disabled {
   resize: vertical;
 }
 
+.stack-create input:focus,
+.stack-create textarea:focus,
+.knowledge-search input:focus {
+  outline: 2px solid #e8b85d;
+  outline-offset: 2px;
+}
+
 .stack-card,
 .empty-card,
 .source-row,
@@ -690,6 +730,11 @@ button:disabled {
   color: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.stack-card > button:focus {
+  outline: 2px solid #e8b85d;
+  outline-offset: 2px;
 }
 
 .stack-card span,
@@ -732,6 +777,20 @@ button:disabled {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.split-action-button,
+.view-switch button {
+  border: 1px solid #4a443c;
+  border-radius: 8px;
+  background: #2a2723;
+  cursor: pointer;
+}
+
+.split-action-button:focus,
+.view-switch button:focus {
+  outline: 2px solid #e8b85d;
+  outline-offset: 2px;
 }
 
 .knowledge-grid {

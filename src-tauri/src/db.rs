@@ -378,6 +378,55 @@ fn ensure_column(
     column: &str,
     definition: &str,
 ) -> anyhow::Result<()> {
+    // Validate table and column names against allowlist of known schema names
+    const ALLOWED_TABLES: &[&str] = &[
+        "conversations",
+        "messages",
+        "presets",
+        "knowledge_stacks",
+        "knowledge_sources",
+        "knowledge_chunks",
+        "knowledge_embeddings",
+    ];
+    const ALLOWED_COLUMNS: &[&str] = &[
+        "id",
+        "title",
+        "provider_id",
+        "model",
+        "created_at",
+        "updated_at",
+        "conversation_id",
+        "role",
+        "content",
+        "status",
+        "parent_id",
+        "name",
+        "system_prompt",
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "description",
+        "stack_id",
+        "path",
+        "format",
+        "content_hash",
+        "indexed_at",
+        "error",
+        "source_id",
+        "chunk_index",
+        "token_count",
+        "chunk_id",
+        "dimensions",
+        "vector",
+    ];
+
+    if !ALLOWED_TABLES.contains(&table) {
+        anyhow::bail!("Invalid table name: {}", table);
+    }
+    if !ALLOWED_COLUMNS.contains(&column) {
+        anyhow::bail!("Invalid column name: {}", column);
+    }
+
     let mut statement = connection.prepare(&format!("PRAGMA table_info({})", table))?;
     let existing = statement
         .query_map([], |row| row.get::<_, String>(1))?

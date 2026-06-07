@@ -738,10 +738,10 @@ export default function App() {
               </article>
             ))}
             <div className="settings-list">
-              <label><span>System</span><textarea value={settings.system_prompt} onChange={(event) => handleSettingsPatch({ system_prompt: event.target.value })} rows={3} /></label>
-              <label><span>Temperature</span><input type="range" min="0" max="1.5" step="0.1" value={settings.temperature} onChange={(event) => handleSettingsPatch({ temperature: Number(event.target.value) })} /><strong>{settings.temperature.toFixed(1)}</strong></label>
-              <label><span>Top P</span><input type="range" min="0.1" max="1" step="0.05" value={settings.top_p} onChange={(event) => handleSettingsPatch({ top_p: Number(event.target.value) })} /><strong>{settings.top_p.toFixed(2)}</strong></label>
-              <label><span>Max tokens</span><input type="number" min="64" max="8192" step="64" value={settings.max_tokens} onChange={(event) => handleSettingsPatch({ max_tokens: Number(event.target.value) })} /></label>
+              <label><span>System</span><textarea value={settings.system_prompt} onChange={(event) => setSettings((prev) => ({ ...prev, system_prompt: event.target.value }))} onBlur={(event) => handleSettingsPatch({ system_prompt: event.target.value })} rows={3} /></label>
+              <label><span>Temperature</span><input type="range" min="0" max="1.5" step="0.1" value={settings.temperature} onChange={(event) => setSettings((prev) => ({ ...prev, temperature: Number(event.target.value) }))} onBlur={(event) => handleSettingsPatch({ temperature: Number(event.target.value) })} onMouseUp={(event) => handleSettingsPatch({ temperature: Number(event.currentTarget.value) })} /><strong>{settings.temperature.toFixed(1)}</strong></label>
+              <label><span>Top P</span><input type="range" min="0.1" max="1" step="0.05" value={settings.top_p} onChange={(event) => setSettings((prev) => ({ ...prev, top_p: Number(event.target.value) }))} onBlur={(event) => handleSettingsPatch({ top_p: Number(event.target.value) })} onMouseUp={(event) => handleSettingsPatch({ top_p: Number(event.currentTarget.value) })} /><strong>{settings.top_p.toFixed(2)}</strong></label>
+              <label><span>Max tokens</span><input type="number" min="64" max="8192" step="64" value={settings.max_tokens} onChange={(event) => setSettings((prev) => ({ ...prev, max_tokens: Number(event.target.value) }))} onBlur={(event) => handleSettingsPatch({ max_tokens: Number(event.target.value) })} /></label>
             </div>
           </section>
         ) : null}
