@@ -31,6 +31,13 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .manage(RuntimeState::default())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let paths = paths::AppPaths::resolve(&handle)?;
+            paths.ensure()?;
+            db::migrate(&paths.database)?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             setup_check_prereqs,
             setup_build_eie,

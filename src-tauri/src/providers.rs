@@ -73,20 +73,27 @@ pub async fn send_cloud_chat_request(
                 .base_url
                 .as_deref()
                 .unwrap_or("http://127.0.0.1:1234/v1");
-            let url = format!(
-                "{}/chat/completions",
-                base_url.trim_end_matches('/').trim_end_matches("/v1")
-            );
-            let url = if url.ends_with("/v1/chat/completions") {
-                url
-            } else {
-                format!("{}/v1/chat/completions", base_url.trim_end_matches('/'))
-            };
+            let url = openai_compatible_chat_url(base_url);
             send_openai_compatible(&url, &key, request).await
         }
         "anthropic" => send_anthropic(&key, request).await,
         "google" => send_google(&key, request).await,
         _ => anyhow::bail!("Unsupported provider: {}", provider_id),
+    }
+}
+
+pub fn openai_compatible_chat_url(base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let base = base.strip_suffix("/v1").unwrap_or(base);
+    format!("{}/v1/chat/completions", base)
+}
+
+pub fn provider_http_error_message(provider: &str, status: impl std::fmt::Display, body: &str) -> String {
+    let body = body.trim();
+    if body.is_empty() {
+        format!("{} API error ({})", provider, status)
+    } else {
+        format!("{} API error ({}): {}", provider, status, body)
     }
 }
 
@@ -190,8 +197,12 @@ async fn send_openai_compatible(
             "stream": false
         }))
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_body = response.text().await.unwrap_or_default();
+        anyhow::bail!("{}", provider_http_error_message("OpenAI", status, &error_body));
+    }
     let value = response.json::<serde_json::Value>().await?;
     let content = value
         .pointer("/choices/0/message/content")
@@ -207,6 +218,7 @@ async fn send_openai_compatible(
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         content,
+        citations: Vec::new(),
     })
 }
 
@@ -240,8 +252,12 @@ async fn send_anthropic(key: &str, request: &ChatRequest) -> anyhow::Result<Chat
         .header("anthropic-version", "2023-06-01")
         .json(&body)
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_body = response.text().await.unwrap_or_default();
+        anyhow::bail!("{}", provider_http_error_message("Anthropic", status, &error_body));
+    }
     let value = response.json::<serde_json::Value>().await?;
     let content = value
         .pointer("/content/0/text")
@@ -257,6 +273,7 @@ async fn send_anthropic(key: &str, request: &ChatRequest) -> anyhow::Result<Chat
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         content,
+        citations: Vec::new(),
     })
 }
 
@@ -297,8 +314,12 @@ async fn send_google(key: &str, request: &ChatRequest) -> anyhow::Result<ChatRes
         .post(url)
         .json(&body)
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_body = response.text().await.unwrap_or_default();
+        anyhow::bail!("{}", provider_http_error_message("Google", status, &error_body));
+    }
     let value = response.json::<serde_json::Value>().await?;
     let content = value
         .pointer("/candidates/0/content/parts/0/text")
@@ -314,5 +335,6 @@ async fn send_google(key: &str, request: &ChatRequest) -> anyhow::Result<ChatRes
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         content,
+        citations: Vec::new(),
     })
 }

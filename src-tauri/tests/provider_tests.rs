@@ -1,5 +1,6 @@
 use helios_chat_lib::providers::{
-    delete_provider_key, list_providers, provider_key_exists, set_provider_key,
+    delete_provider_key, list_providers, openai_compatible_chat_url, provider_http_error_message,
+    provider_key_exists, set_provider_key,
 };
 
 #[test]
@@ -54,4 +55,24 @@ fn deleting_a_cloud_key_disables_the_provider() {
 
     assert!(!anthropic.enabled);
     assert!(!anthropic.has_key);
+}
+
+#[test]
+fn openai_compatible_chat_url_normalizes_v1_suffix() {
+    assert_eq!(
+        openai_compatible_chat_url("http://127.0.0.1:1234/v1"),
+        "http://127.0.0.1:1234/v1/chat/completions"
+    );
+    assert_eq!(
+        openai_compatible_chat_url("http://127.0.0.1:1234/v1/"),
+        "http://127.0.0.1:1234/v1/chat/completions"
+    );
+}
+
+#[test]
+fn provider_http_error_message_keeps_response_body() {
+    let message = provider_http_error_message("OpenAI", "401 Unauthorized", "{\"error\":\"invalid key\"}");
+
+    assert!(message.contains("OpenAI API error (401 Unauthorized)"));
+    assert!(message.contains("invalid key"));
 }

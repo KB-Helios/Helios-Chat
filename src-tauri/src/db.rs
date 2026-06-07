@@ -164,7 +164,7 @@ pub fn create_conversation(
     provider_id: &str,
     model: &str,
 ) -> anyhow::Result<Conversation> {
-    let connection = open_migrated(path)?;
+    let connection = open_database(path)?;
     let now = now_string();
     let conversation = Conversation {
         id: uuid::Uuid::new_v4().to_string(),
@@ -190,7 +190,7 @@ pub fn create_conversation(
 }
 
 pub fn list_conversations(path: &Path, search: Option<&str>) -> anyhow::Result<Vec<Conversation>> {
-    let connection = open_migrated(path)?;
+    let connection = open_database(path)?;
     let mut conversations = Vec::new();
     if let Some(search) = search.filter(|value| !value.trim().is_empty()) {
         let pattern = format!("%{}%", search.trim());
@@ -225,18 +225,18 @@ pub fn update_conversation(
     provider_id: &str,
     model: &str,
 ) -> anyhow::Result<Conversation> {
-    let connection = open_migrated(path)?;
+    let connection = open_database(path)?;
     connection.execute(
         "UPDATE conversations
-         SET title = ?1, provider_id = ?2, model = ?3
-         WHERE id = ?4",
-        params![non_empty_title(title), provider_id, model, id],
+         SET title = ?1, provider_id = ?2, model = ?3, updated_at = ?4
+         WHERE id = ?5",
+        params![non_empty_title(title), provider_id, model, now_string(), id],
     )?;
     get_conversation(&connection, id)
 }
 
 pub fn delete_conversation(path: &Path, id: &str) -> anyhow::Result<()> {
-    let connection = open_migrated(path)?;
+    let connection = open_database(path)?;
     connection.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
     Ok(())
 }
@@ -249,7 +249,7 @@ pub fn append_message(
     status: &str,
     parent_id: Option<&str>,
 ) -> anyhow::Result<Message> {
-    let connection = open_migrated(path)?;
+    let connection = open_database(path)?;
     let message = Message {
         id: uuid::Uuid::new_v4().to_string(),
         conversation_id: conversation_id.to_string(),
@@ -277,7 +277,7 @@ pub fn append_message(
 }
 
 pub fn list_messages(path: &Path, conversation_id: &str) -> anyhow::Result<Vec<Message>> {
-    let connection = open_migrated(path)?;
+    let connection = open_database(path)?;
     let mut statement = connection.prepare(
         "SELECT id, conversation_id, role, content, status, parent_id, created_at
          FROM messages
@@ -293,7 +293,7 @@ pub fn list_messages(path: &Path, conversation_id: &str) -> anyhow::Result<Vec<M
 }
 
 pub fn update_message(path: &Path, id: &str, content: &str, status: &str) -> anyhow::Result<Message> {
-    let connection = open_migrated(path)?;
+    let connection = open_database(path)?;
     let (conversation_id, role, rowid): (String, String, i64) = connection.query_row(
         "SELECT conversation_id, role, rowid FROM messages WHERE id = ?1",
         [id],
@@ -303,7 +303,7 @@ pub fn update_message(path: &Path, id: &str, content: &str, status: &str) -> any
         "UPDATE messages SET content = ?1, status = ?2 WHERE id = ?3",
         params![content, status, id],
     )?;
-    if role == "user" {
+    if role == "user" || (role == "assistant" && status == "streaming") {
         connection.execute(
             "DELETE FROM messages WHERE conversation_id = ?1 AND rowid > ?2",
             params![conversation_id, rowid],
@@ -314,7 +314,7 @@ pub fn update_message(path: &Path, id: &str, content: &str, status: &str) -> any
 }
 
 pub fn list_presets(path: &Path) -> anyhow::Result<Vec<Preset>> {
-    let connection = open_migrated(path)?;
+    let connection = open_database(path)?;
     let mut statement = connection.prepare(
         "SELECT id, name, provider_id, model, system_prompt, temperature, top_p, max_tokens, created_at, updated_at
          FROM presets
@@ -329,7 +329,7 @@ pub fn list_presets(path: &Path) -> anyhow::Result<Vec<Preset>> {
 }
 
 pub fn save_preset(path: &Path, preset: &Preset) -> anyhow::Result<Preset> {
-    let connection = open_migrated(path)?;
+    let connection = open_database(path)?;
     let now = now_string();
     let id = if preset.id.trim().is_empty() {
         uuid::Uuid::new_v4().to_string()
@@ -367,7 +367,7 @@ pub fn save_preset(path: &Path, preset: &Preset) -> anyhow::Result<Preset> {
 }
 
 pub fn delete_preset(path: &Path, id: &str) -> anyhow::Result<()> {
-    let connection = open_migrated(path)?;
+    let connection = open_database(path)?;
     connection.execute("DELETE FROM presets WHERE id = ?1", [id])?;
     Ok(())
 }
@@ -391,8 +391,7 @@ fn ensure_column(
     Ok(())
 }
 
-fn open_migrated(path: &Path) -> anyhow::Result<Connection> {
-    migrate(path)?;
+fn open_database(path: &Path) -> anyhow::Result<Connection> {
     let connection = Connection::open(path)?;
     connection.execute_batch("PRAGMA foreign_keys = ON;")?;
     Ok(connection)
@@ -484,7 +483,7 @@ fn now_string() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis()
+        .as_nanos()
         .to_string()
 }
 

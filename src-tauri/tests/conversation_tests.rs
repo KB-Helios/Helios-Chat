@@ -17,9 +17,10 @@ fn conversations_are_listed_newest_first_and_can_be_renamed() {
         .expect("rename");
 
     let conversations = list_conversations(&db_path, None).expect("list");
-    assert_eq!(conversations[0].id, second.id);
-    assert_eq!(conversations[1].title, "Renamed");
-    assert_eq!(conversations[1].provider_id, "eie-local");
+    assert_eq!(conversations[0].id, first.id);
+    assert_eq!(conversations[0].title, "Renamed");
+    assert_eq!(conversations[0].provider_id, "eie-local");
+    assert_eq!(conversations[1].id, second.id);
 }
 
 #[test]
@@ -91,4 +92,40 @@ fn editing_a_user_message_prunes_later_branch_messages() {
     let messages = list_messages(&db_path, &conversation.id).expect("messages");
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].content, "edited hello");
+}
+
+#[test]
+fn regenerating_an_assistant_message_prunes_later_branch_messages() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db_path = dir.path().join("helios.sqlite3");
+    migrate(&db_path).expect("migrate");
+    let conversation = create_conversation(&db_path, "Chat", "eie-local", "qwen3-4b-q4-k-m")
+        .expect("conversation");
+    let first_user = append_message(&db_path, &conversation.id, "user", "hello", "complete", None)
+        .expect("first user");
+    let assistant = append_message(
+        &db_path,
+        &conversation.id,
+        "assistant",
+        "old answer",
+        "complete",
+        Some(&first_user.id),
+    )
+    .expect("assistant");
+    append_message(
+        &db_path,
+        &conversation.id,
+        "user",
+        "follow up",
+        "complete",
+        None,
+    )
+    .expect("follow-up user");
+
+    update_message(&db_path, &assistant.id, "", "streaming").expect("regenerate assistant");
+
+    let messages = list_messages(&db_path, &conversation.id).expect("messages");
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[1].id, assistant.id);
+    assert_eq!(messages[1].status, "streaming");
 }

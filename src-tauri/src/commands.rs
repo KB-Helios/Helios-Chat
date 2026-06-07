@@ -632,7 +632,6 @@ pub fn knowledge_search(
 fn settings_for_app(app: &AppHandle) -> Result<HeliosSettings, String> {
     let paths = AppPaths::resolve(app).map_err(to_string)?;
     paths.ensure().map_err(to_string)?;
-    db::migrate(&paths.database).map_err(to_string)?;
     load_settings(&paths.settings).map_err(to_string)
 }
 
