@@ -345,6 +345,37 @@ fn search_top_k_caps_result_count() {
 // ── source CRUD ───────────────────────────────────────────────────────────────
 
 #[test]
+fn search_clamps_excessive_top_k_to_prompt_safe_limit() {
+    let (dir, conn) = migrated_connection();
+    let stack = knowledge::create_stack(&conn, "Prompt budget test", "").expect("create");
+
+    for index in 0..20_u8 {
+        let path = dir.path().join(format!("budget-{index}.txt"));
+        fs::write(
+            &path,
+            format!(
+                "shared retrieval budget phrase document {index} with enough searchable content"
+            ),
+        )
+        .expect("write");
+        knowledge::index_file(&conn, &stack.id, &path).expect("index");
+    }
+
+    let results = knowledge::search(
+        &conn,
+        &[stack.id],
+        "shared retrieval budget phrase",
+        knowledge::RetrievalOptions {
+            top_k: 500,
+            semantic_weight: 0.5,
+        },
+    )
+    .expect("search");
+
+    assert_eq!(results.len(), 12);
+}
+
+#[test]
 fn list_sources_returns_sources_for_correct_stack_only() {
     let (dir, conn) = migrated_connection();
     let stack_a = knowledge::create_stack(&conn, "Stack A", "").expect("create a");

@@ -12,6 +12,7 @@ use uuid::Uuid;
 const EMBEDDING_DIMS: usize = 128;
 const DEFAULT_CHUNK_TOKENS: usize = 220;
 const DEFAULT_CHUNK_OVERLAP: usize = 36;
+const MAX_RETRIEVAL_RESULTS: usize = 12;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KnowledgeStack {
@@ -219,7 +220,7 @@ pub fn search(
         return Ok(Vec::new());
     }
 
-    let top_k = options.top_k.max(1);
+    let top_k = options.top_k.clamp(1, MAX_RETRIEVAL_RESULTS);
     let semantic_weight = options.semantic_weight.clamp(0.0, 1.0);
     let lexical_scores = lexical_search(conn, stack_ids, query)?;
     let query_embedding = embed_text(query);
