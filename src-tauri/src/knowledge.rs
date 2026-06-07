@@ -125,6 +125,7 @@ pub fn index_file(conn: &Connection, stack_id: &str, path: &Path) -> anyhow::Res
     let source = upsert_source(conn, stack_id, path, "extracting", None, None)?;
 
     if !is_supported_path(path) {
+        replace_chunks(conn, stack_id, &source.id, "")?;
         let error = "Unsupported file format".to_string();
         return update_source_status(conn, &source.id, "failed", None, Some(error));
     }
@@ -132,10 +133,16 @@ pub fn index_file(conn: &Connection, stack_id: &str, path: &Path) -> anyhow::Res
     match extract_text(path) {
         Ok(text) => {
             let hash = content_hash(&text);
-            replace_chunks(conn, stack_id, &source.id, &text)?;
-            update_source_status(conn, &source.id, "indexed", Some(hash), None)
+            let tx = conn.savepoint()?;
+            replace_chunks(&tx, stack_id, &source.id, &text)?;
+            let result = update_source_status(&tx, &source.id, "indexed", Some(hash), None)?;
+            tx.commit()?;
+            Ok(result)
         }
-        Err(error) => update_source_status(conn, &source.id, "failed", None, Some(error.to_string())),
+        Err(error) => {
+            replace_chunks(conn, stack_id, &source.id, "")?;
+            update_source_status(conn, &source.id, "failed", None, Some(error.to_string()))
+        }
     }
 }
 
@@ -441,28 +448,32 @@ fn lexical_search(conn: &Connection, stack_ids: &[String], query: &str) -> anyho
         return Ok(HashMap::new());
     }
 
-    let mut stmt = conn.prepare(
-        "SELECT chunk_id, stack_id, bm25(knowledge_chunks_fts) AS rank
+    let placeholders = stack_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "SELECT chunk_id, bm25(knowledge_chunks_fts) AS rank
          FROM knowledge_chunks_fts
-         WHERE content MATCH ?1
+         WHERE content MATCH ?1 AND stack_id IN ({})
          ORDER BY rank ASC
          LIMIT 64",
-    )?;
-    let allowed = stack_ids.iter().collect::<HashSet<_>>();
-    let rows = stmt.query_map(params![match_query], |row| {
+        placeholders
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let mut params = vec![&match_query as &dyn rusqlite::ToSql];
+    for stack_id in stack_ids {
+        params.push(stack_id as &dyn rusqlite::ToSql);
+    }
+    let rows = stmt.query_map(params.as_slice(), |row| {
         Ok((
             row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, f32>(2)?,
+            row.get::<_, f32>(1)?,
         ))
     })?;
 
     let mut scored = Vec::new();
     for row in rows {
-        let (chunk_id, stack_id, rank) = row?;
-        if allowed.contains(&stack_id) {
-            scored.push((chunk_id, rank));
-        }
+        let (chunk_id, rank) = row?;
+        scored.push((chunk_id, rank));
     }
     let best = scored
         .iter()
@@ -525,8 +536,13 @@ fn discover_files(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
         return Ok(files);
     }
     for entry in std::fs::read_dir(root)? {
-        let path = entry?.path();
-        if path.is_dir() {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = entry.metadata()?;
+        if metadata.is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
             files.extend(discover_files(&path)?);
         } else {
             files.push(path);
