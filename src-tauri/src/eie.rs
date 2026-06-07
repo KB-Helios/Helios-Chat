@@ -1,5 +1,6 @@
 use crate::settings::HeliosSettings;
 use futures_util::StreamExt;
+use crate::knowledge::{KnowledgeSearchResult, RetrievalOptions};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -33,13 +34,13 @@ pub struct BuildResult {
     pub log_path: PathBuf,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatRequest {
     pub conversation_id: Option<String>,
     pub model: String,
@@ -47,12 +48,15 @@ pub struct ChatRequest {
     pub temperature: f32,
     pub top_p: f32,
     pub max_tokens: u32,
+    pub knowledge_stack_ids: Option<Vec<String>>,
+    pub retrieval_options: Option<RetrievalOptions>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChatResponse {
     pub conversation_id: String,
     pub content: String,
+    pub citations: Vec<KnowledgeSearchResult>,
 }
 
 #[derive(Debug, Default)]
@@ -221,6 +225,7 @@ pub async fn send_chat_request(
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         content,
+        citations: Vec::new(),
     })
 }
 

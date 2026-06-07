@@ -36,17 +36,65 @@ export interface ChatPayload {
   temperature: number;
   top_p: number;
   max_tokens: number;
+  knowledge_stack_ids?: string[];
+  retrieval_options?: RetrievalOptions;
 }
 
 export interface ChatResponse {
   conversation_id: string;
   content: string;
+  citations: KnowledgeSearchResult[];
 }
 
 export interface BuildResult {
   backend: string;
   binary_path: string;
   log_path: string;
+}
+
+export interface RetrievalOptions {
+  top_k: number;
+  semantic_weight: number;
+}
+
+export interface ChatKnowledgeFields {
+  knowledge_stack_ids?: string[];
+  retrieval_options?: RetrievalOptions;
+}
+
+export interface KnowledgeStack {
+  id: string;
+  name: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  source_count: number;
+  indexed_source_count: number;
+}
+
+export interface KnowledgeSource {
+  id: string;
+  stack_id: string;
+  path: string;
+  title: string;
+  format: string;
+  status: string;
+  content_hash?: string;
+  indexed_at?: string;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeSearchResult {
+  stack_id: string;
+  source_id: string;
+  source_title: string;
+  chunk_id: string;
+  content: string;
+  score: number;
+  lexical_score: number;
+  semantic_score: number;
 }
 
 export const defaultSettings: HeliosSettings = {
@@ -64,6 +112,43 @@ export const defaultSettings: HeliosSettings = {
 };
 
 let mockEngineRunning = false;
+let mockKnowledgeStacks: KnowledgeStack[] = [
+  {
+    id: "local-research",
+    name: "Local Research",
+    description: "Browser preview stack",
+    created_at: new Date(0).toISOString(),
+    updated_at: new Date(0).toISOString(),
+    source_count: 2,
+    indexed_source_count: 2
+  }
+];
+let mockKnowledgeSources: KnowledgeSource[] = [
+  {
+    id: "source-1",
+    stack_id: "local-research",
+    path: "C:/Helios/docs/local.md",
+    title: "local.md",
+    format: "md",
+    status: "indexed",
+    content_hash: "mock",
+    indexed_at: new Date(0).toISOString(),
+    created_at: new Date(0).toISOString(),
+    updated_at: new Date(0).toISOString()
+  },
+  {
+    id: "source-2",
+    stack_id: "local-research",
+    path: "C:/Helios/docs/notes.pdf",
+    title: "notes.pdf",
+    format: "pdf",
+    status: "indexed",
+    content_hash: "mock",
+    indexed_at: new Date(0).toISOString(),
+    created_at: new Date(0).toISOString(),
+    updated_at: new Date(0).toISOString()
+  }
+];
 
 export function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
@@ -134,6 +219,46 @@ export async function settingsUpdate(settings: HeliosSettings): Promise<HeliosSe
   return invokeCommand<HeliosSettings>("settings_update", { settings });
 }
 
+export async function knowledgeStacksList(): Promise<KnowledgeStack[]> {
+  return invokeCommand<KnowledgeStack[]>("knowledge_stacks_list");
+}
+
+export async function knowledgeStackCreate(name: string, description: string): Promise<KnowledgeStack> {
+  return invokeCommand<KnowledgeStack>("knowledge_stack_create", { name, description });
+}
+
+export async function knowledgeStackUpdate(stackId: string, name: string, description: string): Promise<KnowledgeStack> {
+  return invokeCommand<KnowledgeStack>("knowledge_stack_update", { stackId, name, description });
+}
+
+export async function knowledgeStackDelete(stackId: string): Promise<void> {
+  return invokeCommand<void>("knowledge_stack_delete", { stackId });
+}
+
+export async function knowledgeSourcesList(stackId: string): Promise<KnowledgeSource[]> {
+  return invokeCommand<KnowledgeSource[]>("knowledge_sources_list", { stackId });
+}
+
+export async function knowledgeSourcesAddFiles(stackId: string, paths: string[]): Promise<KnowledgeSource[]> {
+  return invokeCommand<KnowledgeSource[]>("knowledge_sources_add_files", { stackId, paths });
+}
+
+export async function knowledgeSourcesAddFolder(stackId: string, folder: string): Promise<KnowledgeSource[]> {
+  return invokeCommand<KnowledgeSource[]>("knowledge_sources_add_folder", { stackId, folder });
+}
+
+export async function knowledgeSourceRemove(sourceId: string): Promise<void> {
+  return invokeCommand<void>("knowledge_source_remove", { sourceId });
+}
+
+export async function knowledgeStackReindex(stackId: string): Promise<KnowledgeSource[]> {
+  return invokeCommand<KnowledgeSource[]>("knowledge_stack_reindex", { stackId });
+}
+
+export async function knowledgeSearch(stackIds: string[], query: string, options: RetrievalOptions): Promise<KnowledgeSearchResult[]> {
+  return invokeCommand<KnowledgeSearchResult[]>("knowledge_search", { stackIds, query, options });
+}
+
 async function mockInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   await new Promise((resolve) => window.setTimeout(resolve, 120));
 
@@ -176,14 +301,101 @@ async function mockInvoke<T>(command: string, args?: Record<string, unknown>): P
     case "chat_send":
       return {
         conversation_id: String(args?.conversation_id ?? crypto.randomUUID()),
-        content: "EIE is wired as the default local engine. Complete first-run setup to replace this browser preview with real model tokens."
+        content: "EIE is wired as the default local engine. Complete first-run setup to replace this browser preview with real model tokens.",
+        citations: (args?.request as ChatPayload | undefined)?.knowledge_stack_ids?.length
+          ? mockKnowledgeResult()
+          : []
       } as T;
     case "models_set_default":
     case "settings_update":
       return { ...defaultSettings, ...(args?.settings as object), default_model_id: (args?.modelId as string) ?? defaultSettings.default_model_id } as T;
     case "settings_get":
       return defaultSettings as T;
+    case "knowledge_stacks_list":
+      return mockKnowledgeStacks as T;
+    case "knowledge_stack_create": {
+      const now = new Date().toISOString();
+      const stack: KnowledgeStack = {
+        id: crypto.randomUUID(),
+        name: String(args?.name ?? "Untitled stack"),
+        description: String(args?.description ?? ""),
+        created_at: now,
+        updated_at: now,
+        source_count: 0,
+        indexed_source_count: 0
+      };
+      mockKnowledgeStacks = [stack, ...mockKnowledgeStacks];
+      return stack as T;
+    }
+    case "knowledge_stack_update":
+      mockKnowledgeStacks = mockKnowledgeStacks.map((stack) =>
+        stack.id === args?.stackId
+          ? { ...stack, name: String(args?.name ?? stack.name), description: String(args?.description ?? stack.description), updated_at: new Date().toISOString() }
+          : stack
+      );
+      return mockKnowledgeStacks.find((stack) => stack.id === args?.stackId) as T;
+    case "knowledge_stack_delete":
+      mockKnowledgeStacks = mockKnowledgeStacks.filter((stack) => stack.id !== args?.stackId);
+      mockKnowledgeSources = mockKnowledgeSources.filter((source) => source.stack_id !== args?.stackId);
+      return undefined as T;
+    case "knowledge_sources_list":
+      return mockKnowledgeSources.filter((source) => source.stack_id === args?.stackId) as T;
+    case "knowledge_sources_add_files":
+      return addMockSources(String(args?.stackId), (args?.paths as string[]) ?? []) as T;
+    case "knowledge_sources_add_folder":
+      return addMockSources(String(args?.stackId), [`${args?.folder ?? "folder"}/notes.md`]) as T;
+    case "knowledge_source_remove":
+      mockKnowledgeSources = mockKnowledgeSources.filter((source) => source.id !== args?.sourceId);
+      return undefined as T;
+    case "knowledge_stack_reindex":
+      mockKnowledgeSources = mockKnowledgeSources.map((source) =>
+        source.stack_id === args?.stackId ? { ...source, status: "indexed", indexed_at: new Date().toISOString() } : source
+      );
+      return mockKnowledgeSources.filter((source) => source.stack_id === args?.stackId) as T;
+    case "knowledge_search":
+      return mockKnowledgeResult() as T;
     default:
       throw new Error(`Unsupported mock command: ${command}`);
   }
+}
+
+function addMockSources(stackId: string, paths: string[]): KnowledgeSource[] {
+  const now = new Date().toISOString();
+  const added = paths.map((path) => {
+    const title = path.split(/[\\/]/).pop() ?? "source";
+    return {
+      id: crypto.randomUUID(),
+      stack_id: stackId,
+      path,
+      title,
+      format: title.split(".").pop() ?? "unknown",
+      status: "indexed",
+      content_hash: "mock",
+      indexed_at: now,
+      created_at: now,
+      updated_at: now
+    };
+  });
+  mockKnowledgeSources = [...added, ...mockKnowledgeSources];
+  mockKnowledgeStacks = mockKnowledgeStacks.map((stack) =>
+    stack.id === stackId
+      ? { ...stack, source_count: stack.source_count + added.length, indexed_source_count: stack.indexed_source_count + added.length }
+      : stack
+  );
+  return added;
+}
+
+function mockKnowledgeResult(): KnowledgeSearchResult[] {
+  return [
+    {
+      stack_id: "local-research",
+      source_id: "source-1",
+      source_title: "local.md",
+      chunk_id: "chunk-1",
+      content: "Helios Knowledge Hub keeps private documents searchable on this machine.",
+      score: 0.92,
+      lexical_score: 0.85,
+      semantic_score: 0.96
+    }
+  ];
 }

@@ -6,12 +6,19 @@ export interface ChatMessage {
   content: string;
   streaming?: boolean;
   createdAt: string;
+  citations?: ChatCitation[];
 }
 
 export interface ChatState {
   activeModelName: string;
   activeAssistantId?: string;
   messages: ChatMessage[];
+}
+
+export interface ChatCitation {
+  sourceTitle: string;
+  content: string;
+  score: number;
 }
 
 export function createInitialChatState(activeModelName: string): ChatState {
@@ -47,6 +54,21 @@ export function appendAssistantToken(state: ChatState, token: string): ChatState
     messages: state.messages.map((message) =>
       message.id === state.activeAssistantId
         ? { ...message, content: message.content + token }
+        : message
+    )
+  };
+}
+
+export function attachAssistantCitations(state: ChatState, citations: ChatCitation[]): ChatState {
+  if (!state.activeAssistantId || citations.length === 0) {
+    return state;
+  }
+
+  return {
+    ...state,
+    messages: state.messages.map((message) =>
+      message.id === state.activeAssistantId
+        ? { ...message, citations }
         : message
     )
   };

@@ -307,12 +307,57 @@ button:disabled {
   background: #f1bd5d;
 }
 
+.citation-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.stack-chip,
+.citation-chip,
+.mini-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  border: 1px solid #354457;
+  border-radius: 8px;
+  padding: 0 9px;
+  background: #171e27;
+  color: #cbd6e2;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.citation-chip {
+  min-height: 28px;
+  font-size: 12px;
+}
+
+.stack-chip.selected,
+.mini-toggle.selected {
+  border-color: #e0a33f;
+  background: #2f291d;
+  color: #f1bd5d;
+}
+
 .composer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   padding: 18px 24px 22px;
   border-top: 1px solid #263241;
+}
+
+.active-stack-row {
+  display: flex;
+  align-items: center;
+  grid-column: 1 / -1;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  color: #9aa9ba;
 }
 
 .composer textarea {
@@ -495,6 +540,194 @@ button:disabled {
   font-size: 13px;
 }
 
+.knowledge-layout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  flex: 1;
+}
+
+.knowledge-sidebar,
+.knowledge-main {
+  min-height: 0;
+  overflow: auto;
+}
+
+.knowledge-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  border-right: 1px solid #263241;
+  background: #151b24;
+}
+
+.stack-create,
+.stack-list,
+.source-list,
+.result-list {
+  display: grid;
+  gap: 10px;
+}
+
+.stack-create input,
+.stack-create textarea,
+.knowledge-search input {
+  width: 100%;
+  border: 1px solid #344254;
+  border-radius: 8px;
+  padding: 10px;
+  background: #111820;
+  color: #edf2f7;
+}
+
+.stack-create textarea {
+  resize: vertical;
+}
+
+.stack-card,
+.empty-card,
+.source-row,
+.result-card {
+  border: 1px solid #2f3c4c;
+  border-radius: 8px;
+  background: #1a222d;
+}
+
+.stack-card {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+}
+
+.stack-card.selected {
+  border-color: #e0a33f;
+}
+
+.stack-card > button:first-child {
+  display: grid;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stack-card span,
+.knowledge-header p,
+.source-row span,
+.source-row small,
+.result-card span,
+.empty-card span {
+  color: #9aa9ba;
+  font-size: 12px;
+}
+
+.knowledge-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+}
+
+.knowledge-header,
+.knowledge-actions,
+.source-row {
+  display: flex;
+  align-items: center;
+}
+
+.knowledge-header {
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #263241;
+}
+
+.knowledge-header h3 {
+  margin-bottom: 5px;
+  font-size: 22px;
+}
+
+.knowledge-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.knowledge-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(320px, 1fr);
+  gap: 16px;
+  min-height: 0;
+}
+
+.source-panel,
+.search-panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.source-row {
+  gap: 10px;
+  padding: 10px;
+}
+
+.source-row.indexed {
+  border-color: #315747;
+}
+
+.source-row.failed {
+  border-color: #684037;
+}
+
+.source-row > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.source-row strong,
+.source-row span,
+.source-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.result-card,
+.empty-card {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+}
+
+.result-card p {
+  color: #dce6f2;
+  line-height: 1.45;
+}
+
+.empty-card {
+  place-items: center;
+  min-height: 130px;
+  text-align: center;
+}
+
+.empty-card.compact {
+  min-height: 70px;
+}
+
 @media (max-width: 1040px) {
   .app-shell {
     grid-template-columns: 220px minmax(0, 1fr);
@@ -507,6 +740,16 @@ button:disabled {
   .control-panel {
     border-left: 0;
     border-top: 1px solid #263241;
+  }
+
+  .knowledge-layout,
+  .knowledge-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #263241;
   }
 }
 
