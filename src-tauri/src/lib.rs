@@ -5,6 +5,7 @@ pub mod download;
 pub mod eie;
 pub mod knowledge;
 pub mod paths;
+pub mod providers;
 pub mod settings;
 pub mod setup;
 
@@ -42,6 +43,20 @@ pub fn run() {
             models_set_default,
             models_load,
             models_unload,
+            providers_list,
+            provider_key_set,
+            provider_key_delete,
+            provider_test,
+            conversations_list,
+            conversation_create,
+            conversation_update,
+            conversation_delete,
+            messages_list,
+            message_append,
+            message_update,
+            presets_list,
+            preset_save,
+            preset_delete,
             chat_send,
             settings_get,
             settings_update,

@@ -1,11 +1,12 @@
 use crate::catalog::{catalog_by_id, load_builtin_catalog, CatalogModel};
-use crate::db;
+use crate::db::{self, Conversation, Message, Preset};
 use crate::download;
 use crate::eie::{self, BuildResult, ChatRequest, ChatResponse, EngineStatus};
 use crate::knowledge::{
     self, KnowledgeSearchResult, KnowledgeSource, KnowledgeStack, RetrievalOptions,
 };
 use crate::paths::AppPaths;
+use crate::providers::{self, ChatProvider};
 use crate::settings::{load_settings, save_settings, HeliosSettings};
 use crate::setup::{self, BuildBackend, ToolStatus};
 use crate::RuntimeState;
@@ -265,6 +266,22 @@ pub async fn chat_send(
     state: State<'_, RuntimeState>,
     request: ChatRequest,
 ) -> Result<ChatResponse, String> {
+    let provider_id = request.provider_id.as_deref().unwrap_or("eie-local");
+    if provider_id != "eie-local" {
+        let paths = AppPaths::resolve(&app).map_err(to_string)?;
+        paths.ensure().map_err(to_string)?;
+        let response = providers::send_cloud_chat_request(&paths.provider_keys, &request)
+            .await
+            .map_err(|error| {
+                let message = error.to_string();
+                let _ = app.emit("chat:error", &message);
+                message
+            })?;
+        let _ = app.emit("chat:token", &response.content);
+        let _ = app.emit("chat:done", &response.content);
+        return Ok(response);
+    }
+
     let settings = settings_for_app(&app)?;
     let status = {
         let mut runtime = state
@@ -318,6 +335,154 @@ pub async fn chat_send(
         })?;
     response.citations = citations;
     Ok(response)
+}
+
+#[tauri::command]
+pub fn providers_list(app: AppHandle) -> Result<Vec<ChatProvider>, String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    providers::list_providers(&paths.provider_keys).map_err(to_string)
+}
+
+#[tauri::command]
+pub fn provider_key_set(
+    app: AppHandle,
+    provider_id: String,
+    api_key: String,
+) -> Result<Vec<ChatProvider>, String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    providers::set_provider_key(&paths.provider_keys, &provider_id, &api_key).map_err(to_string)?;
+    providers::list_providers(&paths.provider_keys).map_err(to_string)
+}
+
+#[tauri::command]
+pub fn provider_key_delete(
+    app: AppHandle,
+    provider_id: String,
+) -> Result<Vec<ChatProvider>, String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    providers::delete_provider_key(&paths.provider_keys, &provider_id).map_err(to_string)?;
+    providers::list_providers(&paths.provider_keys).map_err(to_string)
+}
+
+#[tauri::command]
+pub fn provider_test(app: AppHandle, provider_id: String) -> Result<String, String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    if provider_id == "eie-local" {
+        return Ok("EIE local provider is available without an API key.".to_string());
+    }
+    if providers::provider_key_exists(&paths.provider_keys, &provider_id).map_err(to_string)? {
+        Ok("Provider key is saved locally.".to_string())
+    } else {
+        Err(format!("{} API key is not configured.", provider_id))
+    }
+}
+
+#[tauri::command]
+pub fn conversations_list(
+    app: AppHandle,
+    search: Option<String>,
+) -> Result<Vec<Conversation>, String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    db::list_conversations(&paths.database, search.as_deref()).map_err(to_string)
+}
+
+#[tauri::command]
+pub fn conversation_create(
+    app: AppHandle,
+    title: String,
+    provider_id: String,
+    model: String,
+) -> Result<Conversation, String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    db::create_conversation(&paths.database, &title, &provider_id, &model).map_err(to_string)
+}
+
+#[tauri::command]
+pub fn conversation_update(
+    app: AppHandle,
+    id: String,
+    title: String,
+    provider_id: String,
+    model: String,
+) -> Result<Conversation, String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    db::update_conversation(&paths.database, &id, &title, &provider_id, &model).map_err(to_string)
+}
+
+#[tauri::command]
+pub fn conversation_delete(app: AppHandle, id: String) -> Result<(), String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    db::delete_conversation(&paths.database, &id).map_err(to_string)
+}
+
+#[tauri::command]
+pub fn messages_list(app: AppHandle, conversation_id: String) -> Result<Vec<Message>, String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    db::list_messages(&paths.database, &conversation_id).map_err(to_string)
+}
+
+#[tauri::command]
+pub fn message_append(
+    app: AppHandle,
+    conversation_id: String,
+    role: String,
+    content: String,
+    status: String,
+    parent_id: Option<String>,
+) -> Result<Message, String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    db::append_message(
+        &paths.database,
+        &conversation_id,
+        &role,
+        &content,
+        &status,
+        parent_id.as_deref(),
+    )
+    .map_err(to_string)
+}
+
+#[tauri::command]
+pub fn message_update(
+    app: AppHandle,
+    id: String,
+    content: String,
+    status: String,
+) -> Result<Message, String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    db::update_message(&paths.database, &id, &content, &status).map_err(to_string)
+}
+
+#[tauri::command]
+pub fn presets_list(app: AppHandle) -> Result<Vec<Preset>, String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    db::list_presets(&paths.database).map_err(to_string)
+}
+
+#[tauri::command]
+pub fn preset_save(app: AppHandle, preset: Preset) -> Result<Preset, String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    db::save_preset(&paths.database, &preset).map_err(to_string)
+}
+
+#[tauri::command]
+pub fn preset_delete(app: AppHandle, id: String) -> Result<(), String> {
+    let paths = AppPaths::resolve(&app).map_err(to_string)?;
+    paths.ensure().map_err(to_string)?;
+    db::delete_preset(&paths.database, &id).map_err(to_string)
 }
 
 #[tauri::command]

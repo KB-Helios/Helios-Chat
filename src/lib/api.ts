@@ -1,4 +1,4 @@
-import { defaultCatalog, type CatalogModel } from "./catalog";
+import { defaultCatalog, recommendedModel, type CatalogModel } from "./catalog";
 
 export interface ToolStatus {
   name: string;
@@ -29,15 +29,71 @@ export interface HeliosSettings {
   engine_port: number;
 }
 
-export interface ChatPayload {
+export type ProviderKind = "eie-local" | "openai" | "anthropic" | "google" | "openai-compatible";
+
+export interface ChatProvider {
+  id: string;
+  kind: ProviderKind;
+  label: string;
+  enabled: boolean;
+  requiresKey: boolean;
+  hasKey: boolean;
+  baseUrl?: string;
+  models: string[];
+}
+
+export interface Conversation {
+  id: string;
+  title: string;
+  providerId: string;
+  model: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Message {
+  id: string;
+  conversationId: string;
+  role: "system" | "user" | "assistant";
+  content: string;
+  status: "streaming" | "complete" | "error";
+  parentId?: string;
+  createdAt: string;
+  citations?: Array<{ sourceTitle: string; content: string; score: number }>;
+}
+
+export interface Preset {
+  id: string;
+  name: string;
+  providerId: string;
+  model: string;
+  systemPrompt: string;
+  temperature: number;
+  topP: number;
+  maxTokens: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RetrievalOptions {
+  top_k: number;
+  semantic_weight: number;
+}
+
+export interface ChatKnowledgeFields {
+  knowledge_stack_ids?: string[];
+  retrieval_options?: RetrievalOptions;
+}
+
+export interface ChatPayload extends ChatKnowledgeFields {
   conversation_id?: string;
+  provider_id?: string;
+  base_url?: string;
   model: string;
   messages: Array<{ role: string; content: string }>;
   temperature: number;
   top_p: number;
   max_tokens: number;
-  knowledge_stack_ids?: string[];
-  retrieval_options?: RetrievalOptions;
 }
 
 export interface ChatResponse {
@@ -50,16 +106,6 @@ export interface BuildResult {
   backend: string;
   binary_path: string;
   log_path: string;
-}
-
-export interface RetrievalOptions {
-  top_k: number;
-  semantic_weight: number;
-}
-
-export interface ChatKnowledgeFields {
-  knowledge_stack_ids?: string[];
-  retrieval_options?: RetrievalOptions;
 }
 
 export interface KnowledgeStack {
@@ -112,6 +158,13 @@ export const defaultSettings: HeliosSettings = {
 };
 
 let mockEngineRunning = false;
+let mockSettings = { ...defaultSettings };
+let mockProviders: ChatProvider[] = createDefaultProviders();
+let mockConversations: Conversation[] = [];
+let mockMessages: Message[] = [];
+let mockPresets: Preset[] = [
+  createPreset("Balanced local", "eie-local", "qwen3-4b-q4-k-m", "You are Helios, a concise local AI assistant.", 0.7, 0.9, 1024)
+];
 let mockKnowledgeStacks: KnowledgeStack[] = [
   {
     id: "local-research",
@@ -181,6 +234,62 @@ export async function engineStop(): Promise<EngineStatus> {
 
 export async function engineStatus(): Promise<EngineStatus> {
   return invokeCommand<EngineStatus>("engine_status");
+}
+
+export async function providersList(): Promise<ChatProvider[]> {
+  return invokeCommand<ChatProvider[]>("providers_list");
+}
+
+export async function providerKeySet(providerId: string, apiKey: string): Promise<ChatProvider[]> {
+  return invokeCommand<ChatProvider[]>("provider_key_set", { providerId, apiKey });
+}
+
+export async function providerKeyDelete(providerId: string): Promise<ChatProvider[]> {
+  return invokeCommand<ChatProvider[]>("provider_key_delete", { providerId });
+}
+
+export async function providerTest(providerId: string): Promise<string> {
+  return invokeCommand<string>("provider_test", { providerId });
+}
+
+export async function conversationsList(search?: string): Promise<Conversation[]> {
+  return invokeCommand<Conversation[]>("conversations_list", { search });
+}
+
+export async function conversationCreate(title: string, providerId: string, model: string): Promise<Conversation> {
+  return invokeCommand<Conversation>("conversation_create", { title, providerId, model });
+}
+
+export async function conversationUpdate(id: string, title: string, providerId: string, model: string): Promise<Conversation> {
+  return invokeCommand<Conversation>("conversation_update", { id, title, providerId, model });
+}
+
+export async function conversationDelete(id: string): Promise<void> {
+  return invokeCommand<void>("conversation_delete", { id });
+}
+
+export async function messagesList(conversationId: string): Promise<Message[]> {
+  return invokeCommand<Message[]>("messages_list", { conversationId });
+}
+
+export async function messageAppend(conversationId: string, role: Message["role"], content: string, status: Message["status"], parentId?: string): Promise<Message> {
+  return invokeCommand<Message>("message_append", { conversationId, role, content, status, parentId });
+}
+
+export async function messageUpdate(id: string, content: string, status: Message["status"]): Promise<Message> {
+  return invokeCommand<Message>("message_update", { id, content, status });
+}
+
+export async function presetsList(): Promise<Preset[]> {
+  return invokeCommand<Preset[]>("presets_list");
+}
+
+export async function presetSave(preset: Preset): Promise<Preset> {
+  return invokeCommand<Preset>("preset_save", { preset });
+}
+
+export async function presetDelete(id: string): Promise<void> {
+  return invokeCommand<void>("preset_delete", { id });
 }
 
 export async function modelsCatalog(): Promise<CatalogModel[]> {
@@ -260,7 +369,7 @@ export async function knowledgeSearch(stackIds: string[], query: string, options
 }
 
 async function mockInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  await new Promise((resolve) => window.setTimeout(resolve, 120));
+  await new Promise((resolve) => window.setTimeout(resolve, 80));
 
   switch (command) {
     case "setup_check_prereqs":
@@ -289,6 +398,80 @@ async function mockInvoke<T>(command: string, args?: Record<string, unknown>): P
         pid: mockEngineRunning ? 4242 : undefined,
         detail: mockEngineRunning ? "EIE process is managed by Helios." : "EIE is not running."
       } as T;
+    case "providers_list":
+      return mockProviders as T;
+    case "provider_key_set":
+      mockProviders = mockProviders.map((provider) =>
+        provider.id === args?.providerId
+          ? { ...provider, enabled: true, hasKey: true }
+          : provider
+      );
+      return mockProviders as T;
+    case "provider_key_delete":
+      mockProviders = mockProviders.map((provider) =>
+        provider.id === args?.providerId
+          ? { ...provider, enabled: !provider.requiresKey, hasKey: false }
+          : provider
+      );
+      return mockProviders as T;
+    case "provider_test":
+      return (args?.providerId === "eie-local" ? "EIE local provider is available." : "Provider key is saved locally.") as T;
+    case "conversations_list": {
+      const search = String(args?.search ?? "").toLowerCase();
+      const conversations = search
+        ? mockConversations.filter((conversation) => conversation.title.toLowerCase().includes(search))
+        : mockConversations;
+      return [...conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) as T;
+    }
+    case "conversation_create": {
+      const conversation = createConversation(String(args?.title ?? "New chat"), String(args?.providerId ?? "eie-local"), String(args?.model ?? "qwen3-4b-q4-k-m"));
+      mockConversations = [conversation, ...mockConversations];
+      return conversation as T;
+    }
+    case "conversation_update": {
+      const updated = createConversation(String(args?.title ?? "New chat"), String(args?.providerId ?? "eie-local"), String(args?.model ?? "qwen3-4b-q4-k-m"), String(args?.id));
+      mockConversations = mockConversations.map((conversation) => conversation.id === updated.id ? { ...conversation, ...updated } : conversation);
+      return updated as T;
+    }
+    case "conversation_delete":
+      mockConversations = mockConversations.filter((conversation) => conversation.id !== args?.id);
+      mockMessages = mockMessages.filter((message) => message.conversationId !== args?.id);
+      return undefined as T;
+    case "messages_list":
+      return mockMessages.filter((message) => message.conversationId === args?.conversationId) as T;
+    case "message_append": {
+      const message = createMessage(
+        String(args?.conversationId),
+        String(args?.role) as Message["role"],
+        String(args?.content ?? ""),
+        String(args?.status ?? "complete") as Message["status"],
+        args?.parentId ? String(args.parentId) : undefined
+      );
+      mockMessages = [...mockMessages, message];
+      return message as T;
+    }
+    case "message_update": {
+      let updated = mockMessages.find((message) => message.id === args?.id);
+      mockMessages = mockMessages.map((message) => {
+        if (message.id !== args?.id) {
+          return message;
+        }
+        updated = { ...message, content: String(args?.content ?? ""), status: String(args?.status ?? "complete") as Message["status"] };
+        return updated;
+      });
+      return updated as T;
+    }
+    case "presets_list":
+      return mockPresets as T;
+    case "preset_save": {
+      const preset = args?.preset as Preset;
+      const saved = { ...preset, id: preset.id || crypto.randomUUID(), updatedAt: new Date().toISOString(), createdAt: preset.createdAt || new Date().toISOString() };
+      mockPresets = [saved, ...mockPresets.filter((item) => item.id !== saved.id)];
+      return saved as T;
+    }
+    case "preset_delete":
+      mockPresets = mockPresets.filter((preset) => preset.id !== args?.id);
+      return undefined as T;
     case "models_catalog":
       return defaultCatalog as T;
     case "models_download":
@@ -300,17 +483,18 @@ async function mockInvoke<T>(command: string, args?: Record<string, unknown>): P
       return undefined as T;
     case "chat_send":
       return {
-        conversation_id: String(args?.conversation_id ?? crypto.randomUUID()),
+        conversation_id: String((args?.request as ChatPayload | undefined)?.conversation_id ?? crypto.randomUUID()),
         content: "EIE is wired as the default local engine. Complete first-run setup to replace this browser preview with real model tokens.",
-        citations: (args?.request as ChatPayload | undefined)?.knowledge_stack_ids?.length
-          ? mockKnowledgeResult()
-          : []
+        citations: (args?.request as ChatPayload | undefined)?.knowledge_stack_ids?.length ? mockKnowledgeResult() : []
       } as T;
     case "models_set_default":
+      mockSettings = { ...mockSettings, default_model_id: String(args?.modelId ?? defaultSettings.default_model_id) };
+      return mockSettings as T;
     case "settings_update":
-      return { ...defaultSettings, ...(args?.settings as object), default_model_id: (args?.modelId as string) ?? defaultSettings.default_model_id } as T;
+      mockSettings = { ...mockSettings, ...(args?.settings as object) };
+      return mockSettings as T;
     case "settings_get":
-      return defaultSettings as T;
+      return mockSettings as T;
     case "knowledge_stacks_list":
       return mockKnowledgeStacks as T;
     case "knowledge_stack_create": {
@@ -357,6 +541,31 @@ async function mockInvoke<T>(command: string, args?: Record<string, unknown>): P
     default:
       throw new Error(`Unsupported mock command: ${command}`);
   }
+}
+
+function createDefaultProviders(): ChatProvider[] {
+  const recommended = recommendedModel(defaultCatalog)?.id ?? "qwen3-4b-q4-k-m";
+  return [
+    { id: "eie-local", kind: "eie-local", label: "EIE Local", enabled: true, requiresKey: false, hasKey: false, baseUrl: "http://127.0.0.1:8090/v1", models: [recommended, "qwen3-8b-q4-k-m"] },
+    { id: "openai", kind: "openai", label: "OpenAI", enabled: false, requiresKey: true, hasKey: false, baseUrl: "https://api.openai.com/v1", models: ["gpt-4.1", "gpt-4.1-mini", "gpt-4o"] },
+    { id: "anthropic", kind: "anthropic", label: "Anthropic", enabled: false, requiresKey: true, hasKey: false, baseUrl: "https://api.anthropic.com", models: ["claude-4-sonnet", "claude-4-opus", "claude-3-5-haiku-latest"] },
+    { id: "google", kind: "google", label: "Google Gemini", enabled: false, requiresKey: true, hasKey: false, baseUrl: "https://generativelanguage.googleapis.com", models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"] },
+    { id: "openai-compatible", kind: "openai-compatible", label: "OpenAI-compatible", enabled: false, requiresKey: true, hasKey: false, baseUrl: "http://127.0.0.1:1234/v1", models: ["local-model"] }
+  ];
+}
+
+function createConversation(title: string, providerId: string, model: string, id: string = crypto.randomUUID()): Conversation {
+  const now = new Date().toISOString();
+  return { id, title: title.trim() || "New chat", providerId, model, createdAt: now, updatedAt: now };
+}
+
+function createMessage(conversationId: string, role: Message["role"], content: string, status: Message["status"], parentId?: string): Message {
+  return { id: crypto.randomUUID(), conversationId, role, content, status, parentId, createdAt: new Date().toISOString() };
+}
+
+function createPreset(name: string, providerId: string, model: string, systemPrompt: string, temperature: number, topP: number, maxTokens: number): Preset {
+  const now = new Date().toISOString();
+  return { id: crypto.randomUUID(), name, providerId, model, systemPrompt, temperature, topP, maxTokens, createdAt: now, updatedAt: now };
 }
 
 function addMockSources(stackId: string, paths: string[]): KnowledgeSource[] {

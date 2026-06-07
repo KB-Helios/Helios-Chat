@@ -1,33 +1,37 @@
 import {
-  Activity,
   AlertTriangle,
   BookOpen,
+  Bot,
   CheckCircle2,
   Cpu,
-  Database,
   Download,
+  Edit3,
   FileText,
   FolderOpen,
-  HardDrive,
+  KeyRound,
   Layers,
-  MessageSquare,
+  MessageSquarePlus,
   Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Send,
   Settings,
   SlidersHorizontal,
   Square,
-  Terminal,
   Trash2,
   Upload,
   Zap
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
-  defaultSettings,
   chatSend,
+  conversationCreate,
+  conversationDelete,
+  conversationUpdate,
+  conversationsList,
+  defaultSettings,
   engineStart,
   engineStatus,
   engineStop,
@@ -40,42 +44,56 @@ import {
   knowledgeStackCreate,
   knowledgeStackReindex,
   knowledgeStacksList,
+  messageAppend,
+  messageUpdate,
+  messagesList,
   modelsCatalog,
   modelsDownload,
   modelsImportLocal,
   modelsLoad,
   modelsSetDefault,
   modelsUnload,
+  presetsList,
+  providerKeyDelete,
+  providerKeySet,
+  providersList,
   settingsGet,
   settingsUpdate,
   setupBuildEie,
   setupCheckPrereqs,
+  type ChatProvider,
+  type Conversation,
   type EngineStatus,
   type HeliosSettings,
   type KnowledgeSearchResult,
   type KnowledgeSource,
   type KnowledgeStack,
+  type Message,
+  type Preset,
   type ToolStatus
 } from "./lib/api";
-import { addUserMessage, appendAssistantToken, attachAssistantCitations, createInitialChatState, finishAssistantMessage, startAssistantMessage, type ChatMessage, type ChatState } from "./lib/chatState";
 import { catalogById, formatBytes, recommendedModel, type CatalogModel } from "./lib/catalog";
 import { buildKnowledgeChatFields, formatSourceStatus, toggleStackSelection } from "./lib/knowledgeState";
 
-const sampleConversations = [
-  { id: "local", title: "Local EIE session", meta: "Qwen3 4B" },
-  { id: "setup", title: "Setup notes", meta: "Toolchain" },
-  { id: "models", title: "Model testing", meta: "GGUF" }
-];
+type PanelTab = "presets" | "providers" | "eie";
 
 export default function App() {
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
+  const [providers, setProviders] = useState<ChatProvider[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [presets, setPresets] = useState<Preset[]>([]);
   const [settings, setSettings] = useState<HeliosSettings>(defaultSettings);
   const [tools, setTools] = useState<ToolStatus[]>([]);
   const [engine, setEngine] = useState<EngineStatus>({ running: false, endpoint: "http://127.0.0.1:8090", detail: "Checking engine..." });
-  const [chat, setChat] = useState<ChatState>(() => createInitialChatState("Qwen3 4B"));
+  const [activeConversationId, setActiveConversationId] = useState<string>();
+  const [activeProviderId, setActiveProviderId] = useState("eie-local");
+  const [activeModel, setActiveModel] = useState(defaultSettings.default_model_id ?? "qwen3-4b-q4-k-m");
   const [prompt, setPrompt] = useState("");
+  const [search, setSearch] = useState("");
+  const [apiKeyDraft, setApiKeyDraft] = useState<Record<string, string>>({});
+  const [panelTab, setPanelTab] = useState<PanelTab>("presets");
   const [view, setView] = useState<"chat" | "knowledge">("chat");
-  const [selectedTab, setSelectedTab] = useState<"models" | "settings">("models");
   const [activity, setActivity] = useState("Idle");
   const [busy, setBusy] = useState(false);
   const [knowledgeStacks, setKnowledgeStacks] = useState<KnowledgeStack[]>([]);
@@ -92,6 +110,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void refreshConversations(search);
+  }, [search]);
+
+  useEffect(() => {
     if (selectedStackId) {
       void refreshSources(selectedStackId);
     } else {
@@ -100,25 +122,44 @@ export default function App() {
   }, [selectedStackId]);
 
   const byId = useMemo(() => catalogById(catalog), [catalog]);
-  const activeModel = settings.default_model_id ? byId[settings.default_model_id] : recommendedModel(catalog);
-  const readyTools = tools.filter((tool) => tool.present).length;
+  const activeProvider = providers.find((provider) => provider.id === activeProviderId) ?? providers[0];
+  const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId);
+  const localModel = byId[activeModel] ?? recommendedModel(catalog);
+  const providerModels = activeProviderId === "eie-local"
+    ? catalog.map((model) => model.id)
+    : activeProvider?.models ?? [];
   const requiredToolsReady = tools.filter((tool) => ["git", "cmake", "cl"].includes(tool.name)).every((tool) => tool.present);
+  const canSend = Boolean(prompt.trim()) && !busy && Boolean(activeProvider) && (activeProvider.enabled || activeProvider.id === "eie-local");
 
   async function refreshAll() {
-    const [nextCatalog, nextSettings, nextTools, nextEngine, nextStacks] = await Promise.all([
+    const [nextCatalog, nextSettings, nextTools, nextEngine, nextProviders, nextConversations, nextPresets, nextStacks] = await Promise.all([
       modelsCatalog(),
       settingsGet(),
       setupCheckPrereqs(),
       engineStatus(),
+      providersList(),
+      conversationsList(),
+      presetsList(),
       knowledgeStacksList()
     ]);
+    const recommended = recommendedModel(nextCatalog)?.id ?? defaultSettings.default_model_id ?? "qwen3-4b-q4-k-m";
     setCatalog(nextCatalog);
-    setSettings(nextSettings.default_model_id ? nextSettings : { ...nextSettings, default_model_id: recommendedModel(nextCatalog)?.id });
+    setSettings(nextSettings.default_model_id ? nextSettings : { ...nextSettings, default_model_id: recommended });
     setTools(nextTools);
     setEngine(nextEngine);
-    setChat((state) => ({ ...state, activeModelName: recommendedModel(nextCatalog)?.name ?? "Local model" }));
+    setProviders(nextProviders);
+    setConversations(nextConversations);
+    setPresets(nextPresets);
     setKnowledgeStacks(nextStacks);
     setSelectedStackId((current) => current ?? nextStacks[0]?.id);
+    setActiveModel(nextSettings.default_model_id ?? recommended);
+    if (nextConversations[0]) {
+      await selectConversation(nextConversations[0]);
+    }
+  }
+
+  async function refreshConversations(term = "") {
+    setConversations(await conversationsList(term));
   }
 
   async function refreshKnowledge() {
@@ -128,24 +169,206 @@ export default function App() {
   }
 
   async function refreshSources(stackId = selectedStackId) {
-    if (!stackId) {
-      setKnowledgeSources([]);
-      return;
-    }
-    setKnowledgeSources(await knowledgeSourcesList(stackId));
+    setKnowledgeSources(stackId ? await knowledgeSourcesList(stackId) : []);
   }
 
-  async function handleBuild() {
+  async function selectConversation(conversation: Conversation) {
+    setActiveConversationId(conversation.id);
+    setActiveProviderId(conversation.providerId);
+    setActiveModel(conversation.model);
+    setMessages(await messagesList(conversation.id));
+  }
+
+  async function handleNewChat() {
+    const conversation = await conversationCreate("New chat", activeProviderId, activeModel);
+    setConversations((items) => [conversation, ...items]);
+    setActiveConversationId(conversation.id);
+    setMessages([]);
+    setView("chat");
+    setActivity("New chat ready");
+  }
+
+  async function handleDeleteConversation(id: string) {
+    await conversationDelete(id);
+    const remaining = conversations.filter((conversation) => conversation.id !== id);
+    setConversations(remaining);
+    if (activeConversationId === id) {
+      if (remaining[0]) {
+        await selectConversation(remaining[0]);
+      } else {
+        setActiveConversationId(undefined);
+        setMessages([]);
+      }
+    }
+  }
+
+  async function ensureConversation(firstPrompt: string) {
+    if (activeConversation) {
+      if (activeConversation.providerId !== activeProviderId || activeConversation.model !== activeModel) {
+        const updated = await conversationUpdate(activeConversation.id, activeConversation.title, activeProviderId, activeModel);
+        setConversations((items) => items.map((item) => item.id === updated.id ? updated : item));
+      }
+      return activeConversation.id;
+    }
+    const title = firstPrompt.split(/\s+/).slice(0, 6).join(" ") || "New chat";
+    const conversation = await conversationCreate(title, activeProviderId, activeModel);
+    setConversations((items) => [conversation, ...items]);
+    setActiveConversationId(conversation.id);
+    return conversation.id;
+  }
+
+  async function handleSend(event: FormEvent) {
+    event.preventDefault();
+    const trimmed = prompt.trim();
+    if (!trimmed || !canSend) {
+      return;
+    }
+    setPrompt("");
     setBusy(true);
-    setActivity("Preparing EIE build");
+    setActivity("Generating");
+
     try {
-      const result = await setupBuildEie();
-      setActivity(`Prepared ${result.backend.toUpperCase()} build`);
-    } catch (error) {
-      setActivity(error instanceof Error ? error.message : String(error));
+      const conversationId = await ensureConversation(trimmed);
+      const userMessage = await messageAppend(conversationId, "user", trimmed, "complete");
+      const draft = await messageAppend(conversationId, "assistant", "", "streaming", userMessage.id);
+      const nextMessages = [...messages, userMessage, draft];
+      setMessages(nextMessages);
+      await runCompletion(conversationId, draft, nextMessages);
+      await refreshConversations(search);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function runCompletion(conversationId: string, draft: Message, conversationMessages: Message[]) {
+    let content = "";
+    let receivedToken = false;
+    let unlistenToken: (() => void) | undefined;
+    let unlistenDone: (() => void) | undefined;
+
+    if (isTauriRuntime()) {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlistenToken = await listen<string>("chat:token", (event) => {
+        receivedToken = true;
+        content += String(event.payload ?? "");
+        setMessages((items) => items.map((message) => message.id === draft.id ? { ...message, content } : message));
+      });
+      unlistenDone = await listen<string>("chat:done", () => setActivity("Idle"));
+    }
+
+    try {
+      const payloadMessages = [
+        ...(settings.system_prompt.trim() ? [{ role: "system", content: settings.system_prompt.trim() }] : []),
+        ...conversationMessages
+          .filter((message) => message.id !== draft.id)
+          .map((message) => ({ role: message.role, content: message.content }))
+      ];
+      const response = await chatSend({
+        conversation_id: conversationId,
+        provider_id: activeProviderId,
+        base_url: activeProvider?.baseUrl,
+        model: activeModel,
+        messages: payloadMessages,
+        temperature: settings.temperature,
+        top_p: settings.top_p,
+        max_tokens: settings.max_tokens,
+        ...buildKnowledgeChatFields(activeStackIds)
+      });
+      if (!receivedToken) {
+        content = response.content;
+        setMessages((items) => items.map((message) => message.id === draft.id ? { ...message, content } : message));
+      }
+      const citations = response.citations.map((citation) => ({
+        sourceTitle: citation.source_title,
+        content: citation.content,
+        score: citation.score
+      }));
+      const saved = await messageUpdate(draft.id, content, "complete");
+      setMessages((items) => items.map((message) => message.id === draft.id ? { ...saved, citations } : message));
+      setActivity("Idle");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const saved = await messageUpdate(draft.id, message, "error");
+      setMessages((items) => items.map((item) => item.id === draft.id ? saved : item));
+      setActivity(message);
+    } finally {
+      unlistenToken?.();
+      unlistenDone?.();
+    }
+  }
+
+  async function handleRegenerate(message: Message) {
+    if (!activeConversationId || busy || !message.parentId) {
+      return;
+    }
+    setBusy(true);
+    setActivity("Regenerating");
+    try {
+      const draft = await messageUpdate(message.id, "", "streaming");
+      const kept = messages.slice(0, messages.findIndex((item) => item.id === message.id));
+      const nextMessages = [...kept, draft];
+      setMessages(nextMessages);
+      await runCompletion(activeConversationId, draft, nextMessages);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleEdit(message: Message) {
+    const next = window.prompt("Edit message", message.content);
+    if (next == null || next.trim() === message.content.trim() || !activeConversationId || busy) {
+      return;
+    }
+    setBusy(true);
+    setActivity("Generating");
+    try {
+      const saved = await messageUpdate(message.id, next.trim(), "complete");
+      const index = messages.findIndex((item) => item.id === message.id);
+      const kept = [...messages.slice(0, index), saved];
+      const draft = await messageAppend(activeConversationId, "assistant", "", "streaming", saved.id);
+      const nextMessages = [...kept, draft];
+      setMessages(nextMessages);
+      await runCompletion(activeConversationId, draft, nextMessages);
+      await refreshConversations(search);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleProviderKey(provider: ChatProvider) {
+    const key = apiKeyDraft[provider.id]?.trim();
+    if (!key) {
+      return;
+    }
+    const next = await providerKeySet(provider.id, key);
+    setProviders(next);
+    setApiKeyDraft((drafts) => ({ ...drafts, [provider.id]: "" }));
+    setActivity(`${provider.label} key saved locally`);
+  }
+
+  async function handleApplyPreset(preset: Preset) {
+    setActiveProviderId(preset.providerId);
+    setActiveModel(preset.model);
+    await handleSettingsPatch({
+      system_prompt: preset.systemPrompt,
+      temperature: preset.temperature,
+      top_p: preset.topP,
+      max_tokens: preset.maxTokens
+    });
+    setActivity(`${preset.name} applied`);
+  }
+
+  async function handleSettingsPatch(patch: Partial<HeliosSettings>) {
+    const next = { ...settings, ...patch };
+    setSettings(next);
+    await settingsUpdate(next);
+  }
+
+  async function handleDefaultModel(model: CatalogModel) {
+    const next = await modelsSetDefault(model.id);
+    setSettings(next);
+    setActiveModel(model.id);
+    setActivity(`${model.name} is the EIE default`);
   }
 
   async function handleEngineToggle() {
@@ -161,11 +384,17 @@ export default function App() {
     }
   }
 
-  async function handleDefaultModel(model: CatalogModel) {
-    const next = await modelsSetDefault(model.id);
-    setSettings(next);
-    setChat((state) => ({ ...state, activeModelName: model.name }));
-    setActivity(`${model.name} is the default`);
+  async function handleBuild() {
+    setBusy(true);
+    setActivity("Preparing EIE build");
+    try {
+      const result = await setupBuildEie();
+      setActivity(`Prepared ${result.backend.toUpperCase()} build`);
+    } catch (error) {
+      setActivity(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleDownload(model: CatalogModel) {
@@ -179,24 +408,6 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }
-
-  async function handleImport() {
-    if (!isTauriRuntime()) {
-      setActivity("Local GGUF import is available in the desktop runtime");
-      return;
-    }
-
-    const { open } = await import("@tauri-apps/plugin-dialog");
-    const selected = await open({
-      multiple: false,
-      filters: [{ name: "GGUF model", extensions: ["gguf"] }]
-    });
-    if (typeof selected !== "string") {
-      return;
-    }
-    const imported = await modelsImportLocal(selected);
-    setActivity(`Imported ${imported}`);
   }
 
   async function handleLoad(model: CatalogModel) {
@@ -225,10 +436,17 @@ export default function App() {
     }
   }
 
-  async function handleSettingsPatch(patch: Partial<HeliosSettings>) {
-    const next = { ...settings, ...patch };
-    setSettings(next);
-    await settingsUpdate(next);
+  async function handleImport() {
+    if (!isTauriRuntime()) {
+      setActivity("Local GGUF import is available in the desktop runtime");
+      return;
+    }
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({ multiple: false, filters: [{ name: "GGUF model", extensions: ["gguf"] }] });
+    if (typeof selected === "string") {
+      const imported = await modelsImportLocal(selected);
+      setActivity(`Imported ${imported}`);
+    }
   }
 
   async function handleCreateStack() {
@@ -246,15 +464,12 @@ export default function App() {
       setActivity("Create a knowledge stack first");
       return;
     }
-
     let paths: string[] = ["C:/Helios/docs/local.md"];
     if (isTauriRuntime()) {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({
         multiple: true,
-        filters: [
-          { name: "Knowledge files", extensions: ["txt", "md", "csv", "json", "jsonl", "pdf", "docx", "rtf", "epub"] }
-        ]
+        filters: [{ name: "Knowledge files", extensions: ["txt", "md", "csv", "json", "jsonl", "pdf", "docx", "rtf", "epub"] }]
       });
       if (!selected) {
         return;
@@ -281,7 +496,6 @@ export default function App() {
       setActivity("Create a knowledge stack first");
       return;
     }
-
     let folder = "C:/Helios/docs";
     if (isTauriRuntime()) {
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -310,7 +524,6 @@ export default function App() {
     if (!selectedStackId) {
       return;
     }
-
     setBusy(true);
     setActivity("Reindexing stack");
     try {
@@ -346,331 +559,260 @@ export default function App() {
     setActiveStackIds((ids) => toggleStackSelection(ids, stackId));
   }
 
-  async function handleSend(event: FormEvent) {
-    event.preventDefault();
-    const trimmed = prompt.trim();
-    if (!trimmed || busy) {
-      return;
-    }
-
-    setPrompt("");
-    setBusy(true);
-    setActivity("Generating");
-    const assistantId = crypto.randomUUID();
-    const userChat = addUserMessage(chat, trimmed);
-    let nextChat = startAssistantMessage(userChat, assistantId);
-    setChat(nextChat);
-
-    if (isTauriRuntime()) {
-      let receivedToken = false;
-      const { listen } = await import("@tauri-apps/api/event");
-      const unlistenToken = await listen<string>("chat:token", (event) => {
-        receivedToken = true;
-        nextChat = appendAssistantToken(nextChat, String(event.payload ?? ""));
-        setChat(nextChat);
-      });
-      const unlistenDone = await listen<string>("chat:done", () => {
-        setActivity("Idle");
-      });
-
-      try {
-        const response = await chatSend({
-          model: activeModel?.id ?? settings.default_model_id ?? defaultSettings.default_model_id ?? "qwen3-4b-q4-k-m",
-          messages: userChat.messages.map((message) => ({ role: message.role, content: message.content })),
-          temperature: settings.temperature,
-          top_p: settings.top_p,
-          max_tokens: settings.max_tokens,
-          ...buildKnowledgeChatFields(activeStackIds)
-        });
-        if (!receivedToken && response.content) {
-          nextChat = appendAssistantToken(nextChat, response.content);
-          setChat(nextChat);
-        }
-        nextChat = attachAssistantCitations(nextChat, response.citations.map((citation) => ({
-          sourceTitle: citation.source_title,
-          content: citation.content,
-          score: citation.score
-        })));
-        setChat(finishAssistantMessage(nextChat));
-        setActivity("Idle");
-      } catch (error) {
-        nextChat = appendAssistantToken(nextChat, error instanceof Error ? error.message : String(error));
-        setChat(finishAssistantMessage(nextChat));
-        setActivity(error instanceof Error ? error.message : String(error));
-      } finally {
-        unlistenToken();
-        unlistenDone();
-        setBusy(false);
-      }
-      return;
-    }
-
-    const tokens = ["EIE ", "is ", "wired ", "as ", "the ", "default ", "local ", "engine. ", "Complete ", "first-run ", "setup ", "to ", "replace ", "this ", "browser ", "preview ", "with ", "real ", "model ", "tokens."];
-    for (const token of tokens) {
-      await new Promise((resolve) => window.setTimeout(resolve, 45));
-      nextChat = appendAssistantToken(nextChat, token);
-      setChat(nextChat);
-    }
-    nextChat = attachAssistantCitations(nextChat, activeStackIds.length ? [{
-      sourceTitle: "local.md",
-      content: "Helios Knowledge Hub keeps private documents searchable on this machine.",
-      score: 0.92
-    }] : []);
-    setChat(finishAssistantMessage(nextChat));
-    setActivity("Idle");
-    setBusy(false);
-  }
-
   return (
     <main className="app-shell">
-      <aside className="sidebar">
+      <aside className="conversation-rail">
         <div className="brand-row">
-          <div className="brand-mark"><Zap size={20} /></div>
+          <div className="brand-mark"><Zap size={19} /></div>
           <div>
             <h1>Helios Chat</h1>
-            <p>EIE local runtime</p>
+            <p>EIE-first workspace</p>
           </div>
         </div>
 
-        <div className="engine-strip">
-          <div className={engine.running ? "status-dot online" : "status-dot"} />
-          <div>
-            <strong>{engine.running ? "Engine online" : "Engine offline"}</strong>
-            <span>{engine.endpoint}</span>
-          </div>
-          <button className="icon-button" onClick={handleEngineToggle} disabled={busy} title={engine.running ? "Stop EIE" : "Start EIE"}>
-            {engine.running ? <Square size={17} /> : <Play size={17} />}
-          </button>
+        <button className="new-chat-button" onClick={handleNewChat}>
+          <MessageSquarePlus size={17} />
+          New chat
+        </button>
+
+        <div className="view-switch">
+          <button className={view === "chat" ? "selected" : ""} onClick={() => setView("chat")}><Bot size={16} /> Chat</button>
+          <button className={view === "knowledge" ? "selected" : ""} onClick={() => setView("knowledge")}><BookOpen size={16} /> Knowledge</button>
         </div>
 
-        <nav className="conversation-list" aria-label="Conversations">
-          <button className={view === "chat" ? "conversation-item active" : "conversation-item"} onClick={() => setView("chat")}>
-            <MessageSquare size={16} />
-            <span>Chat</span>
-            <small>{activeStackIds.length ? `${activeStackIds.length} stack active` : "Local session"}</small>
-          </button>
-          <button className={view === "knowledge" ? "conversation-item active" : "conversation-item"} onClick={() => setView("knowledge")}>
-            <BookOpen size={16} />
-            <span>Knowledge Hub</span>
-            <small>{knowledgeStacks.length} stack{knowledgeStacks.length === 1 ? "" : "s"}</small>
-          </button>
-          {view === "chat" ? sampleConversations.map((conversation) => (
-            <button className="conversation-item" key={conversation.id}>
-              <MessageSquare size={16} />
-              <span>{conversation.title}</span>
-              <small>{conversation.meta}</small>
-            </button>
-          )) : null}
-        </nav>
+        {view === "chat" ? (
+          <>
+            <label className="search-box">
+              <Search size={15} />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search chats" />
+            </label>
+            <nav className="conversation-list" aria-label="Conversations">
+              {conversations.map((conversation) => (
+                <button className={conversation.id === activeConversationId ? "conversation-item active" : "conversation-item"} key={conversation.id} onClick={() => selectConversation(conversation)}>
+                  <span>{conversation.title}</span>
+                  <small>{conversation.providerId} / {conversation.model}</small>
+                  <Trash2 size={15} onClick={(event) => { event.stopPropagation(); void handleDeleteConversation(conversation.id); }} />
+                </button>
+              ))}
+            </nav>
+          </>
+        ) : (
+          <nav className="conversation-list" aria-label="Knowledge stacks">
+            {knowledgeStacks.map((stack) => (
+              <button className={stack.id === selectedStackId ? "conversation-item active" : "conversation-item"} key={stack.id} onClick={() => setSelectedStackId(stack.id)}>
+                <span>{stack.name}</span>
+                <small>{stack.indexed_source_count}/{stack.source_count} indexed</small>
+              </button>
+            ))}
+          </nav>
+        )}
       </aside>
 
-      <section className="workbench">
-        <header className="topbar">
-          <div>
-            <span className="eyebrow">{view === "chat" ? "Default model" : "Local knowledge"}</span>
-            <h2>{view === "chat" ? activeModel?.name ?? "No model selected" : "Knowledge Hub"}</h2>
-          </div>
-          <div className="topbar-actions">
-            <button className="toolbar-button" onClick={refreshAll} title="Refresh status">
-              <RefreshCw size={17} />
-              Refresh
-            </button>
-            {view === "chat" ? <button className="toolbar-button primary" onClick={handleBuild} disabled={busy || !requiredToolsReady} title="Build EIE">
-              <Terminal size={17} />
-              Build EIE
-            </button> : <button className="toolbar-button primary" onClick={handleCreateStack} disabled={busy} title="Create stack">
-              <Plus size={17} />
-              New Stack
-            </button>}
-          </div>
-        </header>
-
-        {view === "chat" ? <div className="main-grid">
-          <section className="chat-panel">
-            <div className="message-scroll">
-              {chat.messages.length === 0 ? (
-                <div className="empty-state">
-                  <Activity size={28} />
-                  <strong>Ready for a local session</strong>
-                  <span>{activeModel?.name ?? "Choose a GGUF model"} through EIE</span>
-                </div>
-              ) : (
-                chat.messages.map((message) => <MessageBubble key={message.id} message={message} />)
-              )}
-            </div>
-
-            <form className="composer" onSubmit={handleSend}>
-              {knowledgeStacks.length ? (
-                <div className="active-stack-row">
-                  <Layers size={15} />
-                  {knowledgeStacks.map((stack) => (
-                    <button
-                      type="button"
-                      className={activeStackIds.includes(stack.id) ? "stack-chip selected" : "stack-chip"}
-                      key={stack.id}
-                      onClick={() => handleToggleActiveStack(stack.id)}
-                    >
-                      {stack.name}
-                    </button>
+      {view === "chat" ? (
+        <section className="chat-workbench">
+          <header className="chat-topbar">
+            <div className="selector-group">
+              <label>
+                Provider
+                <select value={activeProviderId} onChange={(event) => {
+                  const provider = providers.find((item) => item.id === event.target.value);
+                  setActiveProviderId(event.target.value);
+                  setActiveModel(provider?.models[0] ?? activeModel);
+                }}>
+                  {providers.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.label}{provider.id === "eie-local" ? " (default)" : provider.enabled ? "" : " (key needed)"}
+                    </option>
                   ))}
-                </div>
-              ) : null}
-              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ask Helios..." rows={3} />
-              <button className="send-button" disabled={!prompt.trim() || busy} title="Send message">
-                <Send size={18} />
-              </button>
-            </form>
-          </section>
-
-          <aside className="control-panel">
-            <section className="setup-band">
-              <div className="section-heading">
-                <Cpu size={18} />
-                <h3>First Run</h3>
-                <span>{readyTools}/{tools.length || 4}</span>
-              </div>
-              <div className="tool-list">
-                {tools.map((tool) => (
-                  <a className="tool-row" href={tool.install_url || undefined} key={tool.name} target="_blank" rel="noreferrer">
-                    {tool.present ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
-                    <span>{tool.name}</span>
-                    <small>{tool.present ? "Ready" : "Missing"}</small>
-                  </a>
-                ))}
-              </div>
-            </section>
-
-            <div className="tabs">
-              <button className={selectedTab === "models" ? "selected" : ""} onClick={() => setSelectedTab("models")}>
-                <Database size={16} /> Models
-              </button>
-              <button className={selectedTab === "settings" ? "selected" : ""} onClick={() => setSelectedTab("settings")}>
-                <Settings size={16} /> Settings
+                </select>
+              </label>
+              <label>
+                Model
+                <select value={activeModel} onChange={(event) => setActiveModel(event.target.value)}>
+                  {providerModels.map((model) => (
+                    <option key={model} value={model}>{byId[model]?.name ?? model}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="engine-pill">
+              <span className={engine.running ? "status-dot online" : "status-dot"} />
+              <strong>{engine.running ? "EIE online" : "EIE offline"}</strong>
+              <button className="icon-button" onClick={handleEngineToggle} disabled={busy} title={engine.running ? "Stop EIE" : "Start EIE"}>
+                {engine.running ? <Square size={16} /> : <Play size={16} />}
               </button>
             </div>
+          </header>
 
-            {selectedTab === "models" ? (
-              <section className="model-list">
-                {catalog.map((model) => (
-                  <article className={model.id === settings.default_model_id ? "model-card selected" : "model-card"} key={model.id}>
-                    <div>
-                      <h3>{model.name}</h3>
-                      <p>{model.description}</p>
-                    </div>
-                    <div className="model-meta">
-                      <span><HardDrive size={14} /> {formatBytes(model.sizeBytes)}</span>
-                      <span>{model.quantization}</span>
-                      <span>{model.minimumVramGb} GB VRAM</span>
-                    </div>
-                    <div className="model-actions">
-                      <button onClick={() => handleDefaultModel(model)}>{model.id === settings.default_model_id ? "Default" : "Set default"}</button>
-                      <button onClick={() => handleLoad(model)} disabled={busy || !engine.running}>Load</button>
-                      <button onClick={() => handleUnload(model)} disabled={busy || !engine.running}>Unload</button>
-                      <button className="icon-button" onClick={() => handleDownload(model)} disabled={busy} title={`Download ${model.name}`}>
-                        <Download size={16} />
-                      </button>
-                    </div>
-                  </article>
-                ))}
-                <button className="import-button" onClick={handleImport}>
-                  <Upload size={16} />
-                  Import GGUF
-                </button>
-              </section>
+          <div className="message-scroll">
+            {messages.length === 0 ? (
+              <div className="empty-state">
+                <Bot size={30} />
+                <strong>{localModel?.name ?? activeModel}</strong>
+                <span>{activeProvider?.label ?? "EIE Local"} is selected for this chat.</span>
+              </div>
             ) : (
-              <section className="settings-list">
-                <label>
-                  <span><SlidersHorizontal size={15} /> Temperature</span>
-                  <input type="range" min="0" max="1.5" step="0.1" value={settings.temperature} onChange={(event) => handleSettingsPatch({ temperature: Number(event.target.value) })} />
-                  <strong>{settings.temperature.toFixed(1)}</strong>
-                </label>
-                <label>
-                  <span>Top P</span>
-                  <input type="range" min="0.1" max="1" step="0.05" value={settings.top_p} onChange={(event) => handleSettingsPatch({ top_p: Number(event.target.value) })} />
-                  <strong>{settings.top_p.toFixed(2)}</strong>
-                </label>
-                <label>
-                  <span>Context</span>
-                  <input type="number" min="1024" max="32768" step="1024" value={settings.n_ctx} onChange={(event) => handleSettingsPatch({ n_ctx: Number(event.target.value) })} />
-                </label>
-                <label>
-                  <span>Max tokens</span>
-                  <input type="number" min="64" max="8192" step="64" value={settings.max_tokens} onChange={(event) => handleSettingsPatch({ max_tokens: Number(event.target.value) })} />
-                </label>
-                <label>
-                  <span>GPU layers</span>
-                  <input type="number" min="0" max="99" value={settings.n_gpu_layers} onChange={(event) => handleSettingsPatch({ n_gpu_layers: Number(event.target.value) })} />
-                </label>
-                <label>
-                  <span>KV key</span>
-                  <select value={settings.kv_type_k} onChange={(event) => handleSettingsPatch({ kv_type_k: event.target.value })}>
-                    <option value="turbo3">turbo3</option>
-                    <option value="turbo4">turbo4</option>
-                    <option value="q8_0">q8_0</option>
-                    <option value="f16">f16</option>
-                  </select>
-                </label>
-                <label>
-                  <span>KV value</span>
-                  <select value={settings.kv_type_v} onChange={(event) => handleSettingsPatch({ kv_type_v: event.target.value })}>
-                    <option value="turbo3">turbo3</option>
-                    <option value="turbo2">turbo2</option>
-                    <option value="turbo4">turbo4</option>
-                    <option value="q8_0">q8_0</option>
-                    <option value="f16">f16</option>
-                  </select>
-                </label>
-              </section>
+              messages.map((message) => (
+                <article className={`message ${message.role} ${message.status}`} key={message.id}>
+                  <div className="message-meta">
+                    <span>{message.role}</span>
+                    <div>
+                      {message.role === "user" ? <button className="mini-icon" onClick={() => handleEdit(message)} title="Edit message"><Edit3 size={14} /></button> : null}
+                      {message.role === "assistant" ? <button className="mini-icon" onClick={() => handleRegenerate(message)} title="Regenerate"><RotateCcw size={14} /></button> : null}
+                    </div>
+                  </div>
+                  <p>{message.content}{message.status === "streaming" ? <i /> : null}</p>
+                  {message.citations?.length ? (
+                    <div className="citation-row">
+                      {message.citations.map((citation, index) => (
+                        <button className="citation-chip" key={`${citation.sourceTitle}-${index}`} title={citation.content}>
+                          <FileText size={13} />
+                          {citation.sourceTitle}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </article>
+              ))
             )}
+          </div>
 
-            <footer className="activity-line">{activity}</footer>
-          </aside>
-        </div> : (
-          <KnowledgeHub
-            activity={activity}
-            busy={busy}
-            knowledgeQuery={knowledgeQuery}
-            newStackDescription={newStackDescription}
-            newStackName={newStackName}
-            results={knowledgeResults}
-            selectedStackId={selectedStackId}
-            sources={knowledgeSources}
-            stacks={knowledgeStacks}
-            onAddFiles={handleAddKnowledgeFiles}
-            onAddFolder={handleAddKnowledgeFolder}
-            onCreateStack={handleCreateStack}
-            onQueryChange={setKnowledgeQuery}
-            onReindex={handleReindexStack}
-            onRemoveSource={handleRemoveSource}
-            onSearch={handleKnowledgeSearch}
-            onSelectStack={setSelectedStackId}
-            onStackDescriptionChange={setNewStackDescription}
-            onStackNameChange={setNewStackName}
-            activeStackIds={activeStackIds}
-            onToggleActiveStack={handleToggleActiveStack}
-          />
-        )}
-      </section>
-    </main>
-  );
-}
+          <form className="composer" onSubmit={handleSend}>
+            {!activeProvider?.enabled && activeProvider?.requiresKey ? (
+              <div className="composer-warning"><AlertTriangle size={15} /> Add a local API key for {activeProvider.label} before sending.</div>
+            ) : null}
+            {knowledgeStacks.length ? (
+              <div className="active-stack-row">
+                <Layers size={15} />
+                {knowledgeStacks.map((stack) => (
+                  <button type="button" className={activeStackIds.includes(stack.id) ? "stack-chip selected" : "stack-chip"} key={stack.id} onClick={() => handleToggleActiveStack(stack.id)}>
+                    {stack.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ask Helios..." rows={3} />
+            <button className="send-button" disabled={!canSend} title="Send message"><Send size={18} /></button>
+          </form>
+        </section>
+      ) : (
+        <KnowledgeHub
+          activeStackIds={activeStackIds}
+          activity={activity}
+          busy={busy}
+          knowledgeQuery={knowledgeQuery}
+          newStackDescription={newStackDescription}
+          newStackName={newStackName}
+          results={knowledgeResults}
+          selectedStackId={selectedStackId}
+          sources={knowledgeSources}
+          stacks={knowledgeStacks}
+          onAddFiles={handleAddKnowledgeFiles}
+          onAddFolder={handleAddKnowledgeFolder}
+          onCreateStack={handleCreateStack}
+          onQueryChange={setKnowledgeQuery}
+          onReindex={handleReindexStack}
+          onRemoveSource={handleRemoveSource}
+          onSearch={handleKnowledgeSearch}
+          onSelectStack={setSelectedStackId}
+          onStackDescriptionChange={setNewStackDescription}
+          onStackNameChange={setNewStackName}
+          onToggleActiveStack={handleToggleActiveStack}
+        />
+      )}
 
-function MessageBubble({ message }: { message: ChatMessage }) {
-  return (
-    <article className={`message ${message.role}`}>
-      <span>{message.role}</span>
-      <p>{message.content}{message.streaming ? <i /> : null}</p>
-      {message.citations?.length ? (
-        <div className="citation-row">
-          {message.citations.map((citation, index) => (
-            <button className="citation-chip" key={`${citation.sourceTitle}-${index}`} title={citation.content}>
-              <FileText size={13} />
-              {citation.sourceTitle}
-            </button>
-          ))}
+      <aside className="control-drawer">
+        <div className="drawer-tabs">
+          <button className={panelTab === "presets" ? "selected" : ""} onClick={() => setPanelTab("presets")}><SlidersHorizontal size={16} /> Presets</button>
+          <button className={panelTab === "providers" ? "selected" : ""} onClick={() => setPanelTab("providers")}><KeyRound size={16} /> Keys</button>
+          <button className={panelTab === "eie" ? "selected" : ""} onClick={() => setPanelTab("eie")}><Cpu size={16} /> EIE</button>
         </div>
-      ) : null}
-    </article>
+
+        {panelTab === "presets" ? (
+          <section className="drawer-section">
+            {presets.map((preset) => (
+              <article className="preset-card" key={preset.id}>
+                <h3>{preset.name}</h3>
+                <p>{preset.providerId} / {preset.model}</p>
+                <button onClick={() => handleApplyPreset(preset)}>Apply</button>
+              </article>
+            ))}
+            <div className="settings-list">
+              <label><span>System</span><textarea value={settings.system_prompt} onChange={(event) => handleSettingsPatch({ system_prompt: event.target.value })} rows={3} /></label>
+              <label><span>Temperature</span><input type="range" min="0" max="1.5" step="0.1" value={settings.temperature} onChange={(event) => handleSettingsPatch({ temperature: Number(event.target.value) })} /><strong>{settings.temperature.toFixed(1)}</strong></label>
+              <label><span>Top P</span><input type="range" min="0.1" max="1" step="0.05" value={settings.top_p} onChange={(event) => handleSettingsPatch({ top_p: Number(event.target.value) })} /><strong>{settings.top_p.toFixed(2)}</strong></label>
+              <label><span>Max tokens</span><input type="number" min="64" max="8192" step="64" value={settings.max_tokens} onChange={(event) => handleSettingsPatch({ max_tokens: Number(event.target.value) })} /></label>
+            </div>
+          </section>
+        ) : null}
+
+        {panelTab === "providers" ? (
+          <section className="drawer-section">
+            {providers.map((provider) => (
+              <article className="provider-card" key={provider.id}>
+                <div>
+                  <h3>{provider.label}</h3>
+                  <p>{provider.id === "eie-local" ? "Default local engine" : provider.hasKey ? "Key saved locally" : "No key saved"}</p>
+                </div>
+                {provider.hasKey || provider.id === "eie-local" ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}
+                {provider.requiresKey ? (
+                  <>
+                    <input type="password" value={apiKeyDraft[provider.id] ?? ""} onChange={(event) => setApiKeyDraft((drafts) => ({ ...drafts, [provider.id]: event.target.value }))} placeholder="API key" />
+                    <div className="split-actions">
+                      <button onClick={() => handleProviderKey(provider)}>Save</button>
+                      <button onClick={async () => setProviders(await providerKeyDelete(provider.id))}>Clear</button>
+                    </div>
+                  </>
+                ) : null}
+              </article>
+            ))}
+          </section>
+        ) : null}
+
+        {panelTab === "eie" ? (
+          <section className="drawer-section">
+            <div className="engine-card">
+              <strong>{engine.detail}</strong>
+              <span>{engine.endpoint}</span>
+              <div className="split-actions">
+                <button onClick={refreshAll}><RefreshCw size={15} /> Refresh</button>
+                <button onClick={handleBuild} disabled={busy || !requiredToolsReady}><Settings size={15} /> Build EIE</button>
+              </div>
+            </div>
+            <div className="tool-list">
+              {tools.map((tool) => (
+                <a className="tool-row" href={tool.install_url || undefined} key={tool.name} target="_blank" rel="noreferrer">
+                  {tool.present ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                  <span>{tool.name}</span>
+                  <small>{tool.present ? "Ready" : "Missing"}</small>
+                </a>
+              ))}
+            </div>
+            <div className="model-list">
+              {catalog.map((model) => (
+                <article className={model.id === settings.default_model_id ? "model-card selected" : "model-card"} key={model.id}>
+                  <h3>{model.name}</h3>
+                  <p>{model.description}</p>
+                  <div className="model-meta">
+                    <span>{formatBytes(model.sizeBytes)}</span>
+                    <span>{model.quantization}</span>
+                    <span>{model.minimumVramGb} GB VRAM</span>
+                  </div>
+                  <div className="split-actions">
+                    <button onClick={() => handleDefaultModel(model)}>{model.id === settings.default_model_id ? "Default" : "Default"}</button>
+                    <button onClick={() => handleLoad(model)} disabled={busy || !engine.running}>Load</button>
+                    <button onClick={() => handleUnload(model)} disabled={busy || !engine.running}>Unload</button>
+                    <button className="icon-button" onClick={() => handleDownload(model)} disabled={busy} title={`Download ${model.name}`}><Download size={15} /></button>
+                  </div>
+                </article>
+              ))}
+              <button className="import-button" onClick={handleImport}><Upload size={16} /> Import GGUF</button>
+            </div>
+          </section>
+        ) : null}
+        <footer className="activity-line">{activity}</footer>
+      </aside>
+    </main>
   );
 }
 
@@ -722,12 +864,12 @@ function KnowledgeHub({
   const selectedStack = stacks.find((stack) => stack.id === selectedStackId);
 
   return (
-    <div className="knowledge-layout">
+    <section className="knowledge-layout">
       <aside className="knowledge-sidebar">
         <section className="stack-create">
           <input value={newStackName} onChange={(event) => onStackNameChange(event.target.value)} aria-label="Stack name" />
           <textarea value={newStackDescription} onChange={(event) => onStackDescriptionChange(event.target.value)} aria-label="Stack description" rows={2} />
-          <button className="toolbar-button primary" onClick={onCreateStack} disabled={busy}>
+          <button className="new-chat-button" onClick={onCreateStack} disabled={busy}>
             <Plus size={16} />
             Create
           </button>
@@ -762,18 +904,9 @@ function KnowledgeHub({
             <p>{selectedStack?.description || "Create or select a stack to manage sources."}</p>
           </div>
           <div className="knowledge-actions">
-            <button className="toolbar-button" onClick={onAddFiles} disabled={busy || !selectedStackId}>
-              <Upload size={16} />
-              Files
-            </button>
-            <button className="toolbar-button" onClick={onAddFolder} disabled={busy || !selectedStackId}>
-              <FolderOpen size={16} />
-              Folder
-            </button>
-            <button className="toolbar-button" onClick={onReindex} disabled={busy || !selectedStackId}>
-              <RefreshCw size={16} />
-              Reindex
-            </button>
+            <button className="split-action-button" onClick={onAddFiles} disabled={busy || !selectedStackId}><Upload size={16} /> Files</button>
+            <button className="split-action-button" onClick={onAddFolder} disabled={busy || !selectedStackId}><FolderOpen size={16} /> Folder</button>
+            <button className="split-action-button" onClick={onReindex} disabled={busy || !selectedStackId}><RefreshCw size={16} /> Reindex</button>
           </div>
         </div>
 
@@ -786,9 +919,7 @@ function KnowledgeHub({
             </div>
             <div className="source-list">
               {sources.length === 0 ? (
-                <div className="empty-card compact">
-                  <span>No sources indexed.</span>
-                </div>
+                <div className="empty-card compact"><span>No sources indexed.</span></div>
               ) : sources.map((source) => (
                 <article className={`source-row ${source.status}`} key={source.id}>
                   <FileText size={16} />
@@ -797,9 +928,7 @@ function KnowledgeHub({
                     <span>{source.format.toUpperCase()} - {formatSourceStatus(source.status)}</span>
                     {source.error ? <small>{source.error}</small> : null}
                   </div>
-                  <button className="icon-button" onClick={() => onRemoveSource(source.id)} title="Remove source">
-                    <Trash2 size={15} />
-                  </button>
+                  <button className="icon-button" onClick={() => onRemoveSource(source.id)} title="Remove source"><Trash2 size={15} /></button>
                 </article>
               ))}
             </div>
@@ -813,9 +942,7 @@ function KnowledgeHub({
             </div>
             <div className="knowledge-search">
               <input value={knowledgeQuery} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search this stack..." />
-              <button className="send-button" onClick={onSearch} disabled={!knowledgeQuery.trim() || !selectedStackId}>
-                <Search size={17} />
-              </button>
+              <button className="send-button" onClick={onSearch} disabled={!knowledgeQuery.trim() || !selectedStackId}><Search size={17} /></button>
             </div>
             <div className="result-list">
               {results.map((result, index) => (
@@ -830,6 +957,6 @@ function KnowledgeHub({
 
         <footer className="activity-line">{activity}</footer>
       </section>
-    </div>
+    </section>
   );
 }

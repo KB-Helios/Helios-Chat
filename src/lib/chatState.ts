@@ -4,6 +4,8 @@ export interface ChatMessage {
   id: string;
   role: ChatRole;
   content: string;
+  status?: "streaming" | "complete" | "error";
+  parentId?: string;
   streaming?: boolean;
   createdAt: string;
   citations?: ChatCitation[];
@@ -28,11 +30,13 @@ export function createInitialChatState(activeModelName: string): ChatState {
   };
 }
 
-export function startAssistantMessage(state: ChatState, id: string): ChatState {
+export function startAssistantMessage(state: ChatState, id: string, parentId?: string): ChatState {
   const draft: ChatMessage = {
     id,
     role: "assistant",
     content: "",
+    status: "streaming",
+    parentId,
     streaming: true,
     createdAt: new Date().toISOString()
   };
@@ -84,7 +88,7 @@ export function finishAssistantMessage(state: ChatState): ChatState {
     activeAssistantId: undefined,
     messages: state.messages.map((message) =>
       message.id === state.activeAssistantId
-        ? { ...message, streaming: false }
+        ? { ...message, streaming: false, status: "complete" }
         : message
     )
   };
@@ -99,8 +103,26 @@ export function addUserMessage(state: ChatState, content: string): ChatState {
         id: crypto.randomUUID(),
         role: "user",
         content,
+        status: "complete",
         createdAt: new Date().toISOString()
       }
     ]
+  };
+}
+
+export function editMessage(state: ChatState, id: string, content: string): ChatState {
+  const index = state.messages.findIndex((message) => message.id === id);
+  if (index === -1) {
+    return state;
+  }
+
+  return {
+    ...state,
+    activeAssistantId: undefined,
+    messages: state.messages.slice(0, index + 1).map((message) =>
+      message.id === id
+        ? { ...message, content, status: "complete", streaming: false }
+        : message
+    )
   };
 }

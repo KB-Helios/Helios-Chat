@@ -9,6 +9,7 @@ pub struct AppPaths {
     pub engine: PathBuf,
     pub logs: PathBuf,
     pub settings: PathBuf,
+    pub provider_keys: PathBuf,
     pub database: PathBuf,
     pub eie_config: PathBuf,
 }
@@ -26,6 +27,7 @@ impl AppPaths {
             engine: root.join("engine"),
             logs: root.join("logs"),
             settings: root.join("helios.settings.json"),
+            provider_keys: root.join("provider-keys.json"),
             database: root.join("helios.sqlite3"),
             eie_config: root.join("eie.engine.yaml"),
             root,
