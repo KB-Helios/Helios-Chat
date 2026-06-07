@@ -2,7 +2,9 @@ use crate::catalog::{catalog_by_id, load_builtin_catalog, CatalogModel};
 use crate::db;
 use crate::download;
 use crate::eie::{self, BuildResult, ChatRequest, ChatResponse, EngineStatus};
-use crate::knowledge::{self, KnowledgeSearchResult, KnowledgeSource, KnowledgeStack, RetrievalOptions};
+use crate::knowledge::{
+    self, KnowledgeSearchResult, KnowledgeSource, KnowledgeStack, RetrievalOptions,
+};
 use crate::paths::AppPaths;
 use crate::settings::{load_settings, save_settings, HeliosSettings};
 use crate::setup::{self, BuildBackend, ToolStatus};
@@ -278,7 +280,11 @@ pub async fn chat_send(
 
     let mut grounded_request = request.clone();
     let mut citations = Vec::new();
-    if let Some(stack_ids) = request.knowledge_stack_ids.as_ref().filter(|ids| !ids.is_empty()) {
+    if let Some(stack_ids) = request
+        .knowledge_stack_ids
+        .as_ref()
+        .filter(|ids| !ids.is_empty())
+    {
         let query = request
             .messages
             .iter()
@@ -361,56 +367,67 @@ pub fn knowledge_stack_delete(app: AppHandle, stack_id: String) -> Result<(), St
 }
 
 #[tauri::command]
-pub fn knowledge_sources_list(app: AppHandle, stack_id: String) -> Result<Vec<KnowledgeSource>, String> {
+pub fn knowledge_sources_list(
+    app: AppHandle,
+    stack_id: String,
+) -> Result<Vec<KnowledgeSource>, String> {
     let conn = knowledge_connection(&app)?;
     knowledge::list_sources(&conn, &stack_id).map_err(to_string)
 }
 
 #[tauri::command]
-pub fn knowledge_sources_add_files(
+pub async fn knowledge_sources_add_files(
     app: AppHandle,
     stack_id: String,
     paths: Vec<PathBuf>,
 ) -> Result<Vec<KnowledgeSource>, String> {
-    let conn = knowledge_connection(&app)?;
-    let total = paths.len().max(1);
-    let mut sources = Vec::new();
-    for (index, path) in paths.into_iter().enumerate() {
-        let source = knowledge::index_file(&conn, &stack_id, &path).map_err(to_string)?;
-        let _ = app.emit("knowledge:source-status", &source);
-        let _ = app.emit(
-            "knowledge:index-progress",
-            serde_json::json!({
-                "stack_id": stack_id,
-                "completed": index + 1,
-                "total": total
-            }),
-        );
-        sources.push(source);
-    }
-    Ok(sources)
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = knowledge_connection(&app)?;
+        let total = paths.len().max(1);
+        let mut sources = Vec::new();
+        for (index, path) in paths.into_iter().enumerate() {
+            let source = knowledge::index_file(&conn, &stack_id, &path).map_err(to_string)?;
+            let _ = app.emit("knowledge:source-status", &source);
+            let _ = app.emit(
+                "knowledge:index-progress",
+                serde_json::json!({
+                    "stack_id": &stack_id,
+                    "completed": index + 1,
+                    "total": total
+                }),
+            );
+            sources.push(source);
+        }
+        Ok::<Vec<KnowledgeSource>, String>(sources)
+    })
+    .await
+    .map_err(to_string)?
 }
 
 #[tauri::command]
-pub fn knowledge_sources_add_folder(
+pub async fn knowledge_sources_add_folder(
     app: AppHandle,
     stack_id: String,
     folder: PathBuf,
 ) -> Result<Vec<KnowledgeSource>, String> {
-    let conn = knowledge_connection(&app)?;
-    let sources = knowledge::index_folder(&conn, &stack_id, &folder).map_err(to_string)?;
-    for (index, source) in sources.iter().enumerate() {
-        let _ = app.emit("knowledge:source-status", source);
-        let _ = app.emit(
-            "knowledge:index-progress",
-            serde_json::json!({
-                "stack_id": stack_id,
-                "completed": index + 1,
-                "total": sources.len()
-            }),
-        );
-    }
-    Ok(sources)
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = knowledge_connection(&app)?;
+        let sources = knowledge::index_folder(&conn, &stack_id, &folder).map_err(to_string)?;
+        for (index, source) in sources.iter().enumerate() {
+            let _ = app.emit("knowledge:source-status", source);
+            let _ = app.emit(
+                "knowledge:index-progress",
+                serde_json::json!({
+                    "stack_id": &stack_id,
+                    "completed": index + 1,
+                    "total": sources.len()
+                }),
+            );
+        }
+        Ok::<Vec<KnowledgeSource>, String>(sources)
+    })
+    .await
+    .map_err(to_string)?
 }
 
 #[tauri::command]
@@ -420,13 +437,20 @@ pub fn knowledge_source_remove(app: AppHandle, source_id: String) -> Result<(), 
 }
 
 #[tauri::command]
-pub fn knowledge_stack_reindex(app: AppHandle, stack_id: String) -> Result<Vec<KnowledgeSource>, String> {
-    let conn = knowledge_connection(&app)?;
-    let sources = knowledge::reindex_stack(&conn, &stack_id).map_err(to_string)?;
-    for source in &sources {
-        let _ = app.emit("knowledge:source-status", source);
-    }
-    Ok(sources)
+pub async fn knowledge_stack_reindex(
+    app: AppHandle,
+    stack_id: String,
+) -> Result<Vec<KnowledgeSource>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = knowledge_connection(&app)?;
+        let sources = knowledge::reindex_stack(&conn, &stack_id).map_err(to_string)?;
+        for source in &sources {
+            let _ = app.emit("knowledge:source-status", source);
+        }
+        Ok::<Vec<KnowledgeSource>, String>(sources)
+    })
+    .await
+    .map_err(to_string)?
 }
 
 #[tauri::command]
@@ -452,7 +476,8 @@ fn knowledge_connection(app: &AppHandle) -> Result<rusqlite::Connection, String>
     paths.ensure().map_err(to_string)?;
     db::migrate(&paths.database).map_err(to_string)?;
     let conn = rusqlite::Connection::open(&paths.database).map_err(to_string)?;
-    conn.execute("PRAGMA foreign_keys = ON", []).map_err(to_string)?;
+    conn.execute("PRAGMA foreign_keys = ON", [])
+        .map_err(to_string)?;
     Ok(conn)
 }
 

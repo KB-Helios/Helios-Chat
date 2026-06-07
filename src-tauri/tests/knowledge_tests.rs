@@ -1,6 +1,7 @@
 use helios_chat_lib::{db, knowledge};
 use rusqlite::Connection;
 use std::fs;
+use std::io::Write;
 
 fn migrated_connection() -> (tempfile::TempDir, Connection) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -36,8 +37,8 @@ fn stack_crud_round_trips_through_sqlite() {
     let (_dir, conn) = migrated_connection();
 
     let created = knowledge::create_stack(&conn, "Research", "Local docs").expect("create stack");
-    let updated =
-        knowledge::update_stack(&conn, &created.id, "Research Vault", "Private docs").expect("update");
+    let updated = knowledge::update_stack(&conn, &created.id, "Research Vault", "Private docs")
+        .expect("update");
     let listed = knowledge::list_stacks(&conn).expect("list");
 
     assert_eq!(updated.name, "Research Vault");
@@ -45,15 +46,20 @@ fn stack_crud_round_trips_through_sqlite() {
     assert_eq!(listed[0].description, "Private docs");
 
     knowledge::delete_stack(&conn, &created.id).expect("delete");
-    assert!(knowledge::list_stacks(&conn).expect("list empty").is_empty());
+    assert!(knowledge::list_stacks(&conn)
+        .expect("list empty")
+        .is_empty());
 }
 
 #[test]
 fn supported_file_filter_accepts_v1_formats_only() {
-    for extension in ["txt", "md", "csv", "json", "jsonl", "pdf", "docx", "rtf", "epub"] {
-        assert!(knowledge::is_supported_file_name(&format!("notes.{extension}")));
+    for extension in ["txt", "md", "csv", "json", "jsonl", "docx", "rtf", "epub"] {
+        assert!(knowledge::is_supported_file_name(&format!(
+            "notes.{extension}"
+        )));
     }
 
+    assert!(!knowledge::is_supported_file_name("scan.pdf"));
     assert!(!knowledge::is_supported_file_name("image.png"));
     assert!(!knowledge::is_supported_file_name("model.gguf"));
 }
@@ -70,7 +76,44 @@ fn text_extraction_handles_plain_text_and_rejects_binary_without_text() {
     let err = knowledge::extract_text(&binary_path).expect_err("binary extraction fails");
 
     assert!(text.contains("Knowledge hub"));
-    assert!(err.to_string().contains("No extractable text"));
+    assert!(err.to_string().contains("PDF extraction is not supported"));
+}
+
+#[test]
+fn text_extraction_reads_docx_document_text_from_zip_xml() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let docx_path = dir.path().join("notes.docx");
+    write_zip_entries(
+        &docx_path,
+        &[(
+            "word/document.xml",
+            r#"<w:document><w:body><w:p><w:r><w:t>Helios docx knowledge phrase</w:t></w:r></w:p></w:body></w:document>"#,
+        )],
+    );
+
+    let text = knowledge::extract_text(&docx_path).expect("extract docx");
+
+    assert!(text.contains("Helios docx knowledge phrase"));
+    assert!(!text.contains("<w:t>"));
+}
+
+#[test]
+fn text_extraction_reads_epub_xhtml_text_from_zip() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let epub_path = dir.path().join("book.epub");
+    write_zip_entries(
+        &epub_path,
+        &[(
+            "OPS/chapter1.xhtml",
+            r#"<html><body><h1>Chapter</h1><p>Helios epub retrieval phrase</p></body></html>"#,
+        )],
+    );
+
+    let text = knowledge::extract_text(&epub_path).expect("extract epub");
+
+    assert!(text.contains("Chapter"));
+    assert!(text.contains("Helios epub retrieval phrase"));
+    assert!(!text.contains("<p>"));
 }
 
 #[test]
@@ -95,7 +138,10 @@ fn embeddings_are_normalized_and_rank_related_text_higher() {
     let unrelated = knowledge::embed_text("oranges weather bicycle");
 
     assert!((knowledge::vector_norm(&query) - 1.0).abs() < 0.0001);
-    assert!(knowledge::cosine_similarity(&query, &related) > knowledge::cosine_similarity(&query, &unrelated));
+    assert!(
+        knowledge::cosine_similarity(&query, &related)
+            > knowledge::cosine_similarity(&query, &unrelated)
+    );
 }
 
 #[test]
@@ -104,7 +150,11 @@ fn indexing_and_hybrid_search_returns_cited_chunks() {
     let stack = knowledge::create_stack(&conn, "Research", "").expect("create stack");
     let local = dir.path().join("local.md");
     let unrelated = dir.path().join("cooking.txt");
-    fs::write(&local, "Helios keeps private knowledge indexed locally for grounded answers.").expect("write local");
+    fs::write(
+        &local,
+        "Helios keeps private knowledge indexed locally for grounded answers.",
+    )
+    .expect("write local");
     fs::write(&unrelated, "Soup recipes use carrots and onions.").expect("write soup");
 
     knowledge::index_file(&conn, &stack.id, &local).expect("index local");
@@ -167,7 +217,10 @@ fn chunk_text_produces_single_chunk_when_text_fits() {
 #[test]
 fn chunk_text_splits_exactly_at_max_tokens_boundary() {
     // 10 tokens, max_tokens=5, overlap=0 → exactly 2 chunks
-    let text = (0..10).map(|i| format!("w{i}")).collect::<Vec<_>>().join(" ");
+    let text = (0..10)
+        .map(|i| format!("w{i}"))
+        .collect::<Vec<_>>()
+        .join(" ");
     let chunks = knowledge::chunk_text(&text, 5, 0);
     assert_eq!(chunks.len(), 2);
     assert!(chunks.iter().all(|c| c.token_count <= 5));
@@ -184,7 +237,7 @@ fn is_supported_file_name_rejects_name_without_extension() {
 #[test]
 fn is_supported_file_name_is_case_insensitive() {
     assert!(knowledge::is_supported_file_name("notes.TXT"));
-    assert!(knowledge::is_supported_file_name("doc.PDF"));
+    assert!(!knowledge::is_supported_file_name("doc.PDF"));
     assert!(knowledge::is_supported_file_name("report.Md"));
     assert!(knowledge::is_supported_file_name("data.JSON"));
 }
@@ -234,7 +287,10 @@ fn search_returns_empty_for_empty_stack_ids() {
         &conn,
         &[],
         "hello",
-        knowledge::RetrievalOptions { top_k: 5, semantic_weight: 0.5 },
+        knowledge::RetrievalOptions {
+            top_k: 5,
+            semantic_weight: 0.5,
+        },
     )
     .expect("search");
     assert!(results.is_empty());
@@ -248,7 +304,10 @@ fn search_returns_empty_for_whitespace_only_query() {
         &conn,
         &[stack.id],
         "   ",
-        knowledge::RetrievalOptions { top_k: 5, semantic_weight: 0.5 },
+        knowledge::RetrievalOptions {
+            top_k: 5,
+            semantic_weight: 0.5,
+        },
     )
     .expect("search");
     assert!(results.is_empty());
@@ -261,7 +320,11 @@ fn search_top_k_caps_result_count() {
 
     for i in 0..4_u8 {
         let path = dir.path().join(format!("doc{i}.txt"));
-        fs::write(&path, format!("private local knowledge indexed document number {i}")).expect("write");
+        fs::write(
+            &path,
+            format!("private local knowledge indexed document number {i}"),
+        )
+        .expect("write");
         knowledge::index_file(&conn, &stack.id, &path).expect("index");
     }
 
@@ -269,7 +332,10 @@ fn search_top_k_caps_result_count() {
         &conn,
         &[stack.id],
         "private local knowledge",
-        knowledge::RetrievalOptions { top_k: 2, semantic_weight: 0.65 },
+        knowledge::RetrievalOptions {
+            top_k: 2,
+            semantic_weight: 0.65,
+        },
     )
     .expect("search");
 
@@ -306,7 +372,11 @@ fn remove_source_deletes_source_and_associated_chunks() {
     let (dir, conn) = migrated_connection();
     let stack = knowledge::create_stack(&conn, "Remove test", "").expect("create");
     let path = dir.path().join("removable.txt");
-    fs::write(&path, "some content to index and then remove from the knowledge stack").expect("write");
+    fs::write(
+        &path,
+        "some content to index and then remove from the knowledge stack",
+    )
+    .expect("write");
     let source = knowledge::index_file(&conn, &stack.id, &path).expect("index");
 
     knowledge::remove_source(&conn, &source.id).expect("remove");
@@ -334,7 +404,11 @@ fn index_file_marks_unsupported_format_as_failed() {
     let source = knowledge::index_file(&conn, &stack.id, &path).expect("index unsupported");
 
     assert_eq!(source.status, "failed");
-    assert!(source.error.as_deref().unwrap_or("").contains("Unsupported"));
+    assert!(source
+        .error
+        .as_deref()
+        .unwrap_or("")
+        .contains("Unsupported"));
 }
 
 #[test]
@@ -342,7 +416,11 @@ fn index_file_sets_indexed_status_and_content_hash_for_text_file() {
     let (dir, conn) = migrated_connection();
     let stack = knowledge::create_stack(&conn, "Hash test", "").expect("create");
     let path = dir.path().join("notes.md");
-    fs::write(&path, "# Notes\nPrivate knowledge indexed for retrieval here.").expect("write");
+    fs::write(
+        &path,
+        "# Notes\nPrivate knowledge indexed for retrieval here.",
+    )
+    .expect("write");
 
     let source = knowledge::index_file(&conn, &stack.id, &path).expect("index");
 
@@ -359,8 +437,16 @@ fn reindex_stack_re_indexes_all_existing_sources() {
 
     let path1 = dir.path().join("file1.txt");
     let path2 = dir.path().join("file2.txt");
-    fs::write(&path1, "first document with local knowledge content for reindexing").expect("write 1");
-    fs::write(&path2, "second document with more private information stored locally").expect("write 2");
+    fs::write(
+        &path1,
+        "first document with local knowledge content for reindexing",
+    )
+    .expect("write 1");
+    fs::write(
+        &path2,
+        "second document with more private information stored locally",
+    )
+    .expect("write 2");
 
     knowledge::index_file(&conn, &stack.id, &path1).expect("index 1");
     knowledge::index_file(&conn, &stack.id, &path2).expect("index 2");
@@ -369,6 +455,60 @@ fn reindex_stack_re_indexes_all_existing_sources() {
 
     assert_eq!(reindexed.len(), 2);
     assert!(reindexed.iter().all(|s| s.status == "indexed"));
+}
+
+#[test]
+fn index_file_preserves_existing_index_when_chunk_rewrite_fails() {
+    let (dir, conn) = migrated_connection();
+    let stack = knowledge::create_stack(&conn, "Atomic test", "").expect("create");
+    let path = dir.path().join("atomic.txt");
+    fs::write(
+        &path,
+        "original searchable knowledge content remains available",
+    )
+    .expect("write original");
+    let source = knowledge::index_file(&conn, &stack.id, &path).expect("index original");
+
+    fs::write(
+        &path,
+        "replacement searchable knowledge content should not commit",
+    )
+    .expect("write replacement");
+    conn.execute(
+        "CREATE TEMP TRIGGER fail_knowledge_chunk_insert
+         BEFORE INSERT ON knowledge_chunks
+         BEGIN
+            SELECT RAISE(FAIL, 'forced chunk insert failure');
+         END",
+        [],
+    )
+    .expect("create trigger");
+
+    let error = knowledge::index_file(&conn, &stack.id, &path).expect_err("rewrite fails");
+    let stored = knowledge::list_sources(&conn, &stack.id)
+        .expect("list")
+        .into_iter()
+        .find(|candidate| candidate.id == source.id)
+        .expect("source still present");
+    let results = knowledge::search(
+        &conn,
+        &[stack.id],
+        "original searchable knowledge",
+        knowledge::RetrievalOptions {
+            top_k: 2,
+            semantic_weight: 0.5,
+        },
+    )
+    .expect("search old index");
+
+    assert!(error.to_string().contains("forced chunk insert failure"));
+    assert_eq!(stored.status, "indexed");
+    assert!(results
+        .iter()
+        .any(|result| result.content.contains("original searchable knowledge")));
+    assert!(!results
+        .iter()
+        .any(|result| result.content.contains("replacement searchable knowledge")));
 }
 
 // ── grounding context additional cases ───────────────────────────────────────
@@ -420,14 +560,25 @@ fn stack_source_count_reflects_indexed_files() {
 
     let path1 = dir.path().join("one.txt");
     let path2 = dir.path().join("two.txt");
-    fs::write(&path1, "alpha beta gamma delta epsilon zeta eta theta enough").expect("write 1");
-    fs::write(&path2, "iota kappa lambda mu nu xi omicron pi rho sigma tau").expect("write 2");
+    fs::write(
+        &path1,
+        "alpha beta gamma delta epsilon zeta eta theta enough",
+    )
+    .expect("write 1");
+    fs::write(
+        &path2,
+        "iota kappa lambda mu nu xi omicron pi rho sigma tau",
+    )
+    .expect("write 2");
 
     knowledge::index_file(&conn, &stack.id, &path1).expect("index 1");
     knowledge::index_file(&conn, &stack.id, &path2).expect("index 2");
 
     let stacks = knowledge::list_stacks(&conn).expect("list stacks");
-    let updated = stacks.iter().find(|s| s.id == stack.id).expect("find stack");
+    let updated = stacks
+        .iter()
+        .find(|s| s.id == stack.id)
+        .expect("find stack");
 
     assert_eq!(updated.source_count, 2);
     assert_eq!(updated.indexed_source_count, 2);
@@ -448,8 +599,16 @@ fn index_folder_indexes_supported_files_and_skips_unsupported() {
 
     let f1 = dir.path().join("top.txt");
     let f2 = subdir.join("nested.md");
-    fs::write(&f1, "top level document with enough extractable text content here").expect("write f1");
-    fs::write(&f2, "nested subdirectory document with sufficient extractable content").expect("write f2");
+    fs::write(
+        &f1,
+        "top level document with enough extractable text content here",
+    )
+    .expect("write f1");
+    fs::write(
+        &f2,
+        "nested subdirectory document with sufficient extractable content",
+    )
+    .expect("write f2");
 
     let sources = knowledge::index_folder(&conn, &stack.id, dir.path()).expect("index folder");
 
@@ -460,4 +619,58 @@ fn index_folder_indexes_supported_files_and_skips_unsupported() {
         .collect();
     assert!(indexed_titles.contains(&"top.txt"));
     assert!(indexed_titles.contains(&"nested.md"));
+}
+
+#[test]
+fn index_folder_skips_symlinked_directories() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db_path = dir.path().join("helios.sqlite3");
+    db::migrate(&db_path).expect("migrate");
+    let conn = Connection::open(&db_path).expect("open db");
+
+    let stack = knowledge::create_stack(&conn, "Symlink test", "").expect("create");
+    let real_dir = dir.path().join("real");
+    let linked_dir = dir.path().join("linked");
+    fs::create_dir(&real_dir).expect("mkdir");
+    fs::write(
+        real_dir.join("real.txt"),
+        "real directory content with enough searchable words",
+    )
+    .expect("write real");
+
+    if create_dir_symlink(&real_dir, &linked_dir).is_err() {
+        return;
+    }
+
+    let sources = knowledge::index_folder(&conn, &stack.id, dir.path()).expect("index folder");
+    let linked_sources: Vec<_> = sources
+        .iter()
+        .filter(|source| source.path.contains("linked"))
+        .collect();
+
+    assert!(linked_sources.is_empty());
+}
+
+fn write_zip_entries(path: &std::path::Path, entries: &[(&str, &str)]) {
+    let file = fs::File::create(path).expect("create zip");
+    let mut writer = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for (name, content) in entries {
+        writer.start_file(*name, options).expect("start zip entry");
+        writer
+            .write_all(content.as_bytes())
+            .expect("write zip entry");
+    }
+    writer.finish().expect("finish zip");
+}
+
+#[cfg(unix)]
+fn create_dir_symlink(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn create_dir_symlink(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(target, link)
 }

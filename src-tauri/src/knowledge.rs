@@ -2,8 +2,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::fs::File;
 use std::hash::{Hash, Hasher};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -61,7 +63,11 @@ pub struct KnowledgeSearchResult {
     pub semantic_score: f32,
 }
 
-pub fn create_stack(conn: &Connection, name: &str, description: &str) -> anyhow::Result<KnowledgeStack> {
+pub fn create_stack(
+    conn: &Connection,
+    name: &str,
+    description: &str,
+) -> anyhow::Result<KnowledgeStack> {
     let now = timestamp();
     let id = Uuid::new_v4().to_string();
     conn.execute(
@@ -71,7 +77,12 @@ pub fn create_stack(conn: &Connection, name: &str, description: &str) -> anyhow:
     get_stack(conn, &id)
 }
 
-pub fn update_stack(conn: &Connection, id: &str, name: &str, description: &str) -> anyhow::Result<KnowledgeStack> {
+pub fn update_stack(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    description: &str,
+) -> anyhow::Result<KnowledgeStack> {
     conn.execute(
         "UPDATE knowledge_stacks SET name = ?1, description = ?2, updated_at = ?3 WHERE id = ?4",
         params![name.trim(), description.trim(), timestamp(), id],
@@ -81,7 +92,10 @@ pub fn update_stack(conn: &Connection, id: &str, name: &str, description: &str) 
 
 pub fn delete_stack(conn: &Connection, id: &str) -> anyhow::Result<()> {
     conn.execute("DELETE FROM knowledge_stacks WHERE id = ?1", params![id])?;
-    conn.execute("DELETE FROM knowledge_chunks_fts WHERE stack_id = ?1", params![id])?;
+    conn.execute(
+        "DELETE FROM knowledge_chunks_fts WHERE stack_id = ?1",
+        params![id],
+    )?;
     Ok(())
 }
 
@@ -116,13 +130,34 @@ pub fn list_sources(conn: &Connection, stack_id: &str) -> anyhow::Result<Vec<Kno
 }
 
 pub fn remove_source(conn: &Connection, source_id: &str) -> anyhow::Result<()> {
-    conn.execute("DELETE FROM knowledge_chunks_fts WHERE source_id = ?1", params![source_id])?;
-    conn.execute("DELETE FROM knowledge_sources WHERE id = ?1", params![source_id])?;
+    conn.execute(
+        "DELETE FROM knowledge_chunks_fts WHERE source_id = ?1",
+        params![source_id],
+    )?;
+    conn.execute(
+        "DELETE FROM knowledge_sources WHERE id = ?1",
+        params![source_id],
+    )?;
     Ok(())
 }
 
-pub fn index_file(conn: &Connection, stack_id: &str, path: &Path) -> anyhow::Result<KnowledgeSource> {
-    let source = upsert_source(conn, stack_id, path, "extracting", None, None)?;
+pub fn index_file(
+    conn: &Connection,
+    stack_id: &str,
+    path: &Path,
+) -> anyhow::Result<KnowledgeSource> {
+    let previous = find_source_by_path(conn, stack_id, path)?;
+    let (status, previous_hash, previous_error) = previous
+        .as_ref()
+        .map(|source| {
+            (
+                source.status.as_str(),
+                source.content_hash.clone(),
+                source.error.clone(),
+            )
+        })
+        .unwrap_or(("extracting", None, None));
+    let source = upsert_source(conn, stack_id, path, status, previous_hash, previous_error)?;
 
     if !is_supported_path(path) {
         replace_chunks(conn, stack_id, &source.id, "")?;
@@ -133,11 +168,18 @@ pub fn index_file(conn: &Connection, stack_id: &str, path: &Path) -> anyhow::Res
     match extract_text(path) {
         Ok(text) => {
             let hash = content_hash(&text);
-            let tx = conn.savepoint()?;
-            replace_chunks(&tx, stack_id, &source.id, &text)?;
-            let result = update_source_status(&tx, &source.id, "indexed", Some(hash), None)?;
-            tx.commit()?;
-            Ok(result)
+            replace_chunks_atomically(conn, stack_id, &source.id, &text, hash).map_err(|error| {
+                if previous.is_none() {
+                    let _ = update_source_status(
+                        conn,
+                        &source.id,
+                        "failed",
+                        None,
+                        Some(error.to_string()),
+                    );
+                }
+                error
+            })
         }
         Err(error) => {
             replace_chunks(conn, stack_id, &source.id, "")?;
@@ -146,7 +188,11 @@ pub fn index_file(conn: &Connection, stack_id: &str, path: &Path) -> anyhow::Res
     }
 }
 
-pub fn index_folder(conn: &Connection, stack_id: &str, folder: &Path) -> anyhow::Result<Vec<KnowledgeSource>> {
+pub fn index_folder(
+    conn: &Connection,
+    stack_id: &str,
+    folder: &Path,
+) -> anyhow::Result<Vec<KnowledgeSource>> {
     let mut indexed = Vec::new();
     for path in discover_files(folder)? {
         indexed.push(index_file(conn, stack_id, &path)?);
@@ -175,7 +221,6 @@ pub fn search(
 
     let top_k = options.top_k.max(1);
     let semantic_weight = options.semantic_weight.clamp(0.0, 1.0);
-    let stack_filter = stack_ids.iter().cloned().collect::<HashSet<_>>();
     let lexical_scores = lexical_search(conn, stack_ids, query)?;
     let query_embedding = embed_text(query);
     let mut candidates = all_chunks(conn, stack_ids)?;
@@ -183,12 +228,8 @@ pub fn search(
     for candidate in &mut candidates {
         candidate.lexical_score = *lexical_scores.get(&candidate.chunk_id).unwrap_or(&0.0);
         candidate.semantic_score = cosine_similarity(&query_embedding, &candidate.embedding);
-        if !stack_filter.contains(&candidate.stack_id) {
-            candidate.score = 0.0;
-        } else {
-            candidate.score = (semantic_weight * candidate.semantic_score)
-                + ((1.0 - semantic_weight) * candidate.lexical_score);
-        }
+        candidate.score = (semantic_weight * candidate.semantic_score)
+            + ((1.0 - semantic_weight) * candidate.lexical_score);
     }
 
     candidates.sort_by(|left, right| {
@@ -196,7 +237,12 @@ pub fn search(
             .score
             .partial_cmp(&left.score)
             .unwrap_or(Ordering::Equal)
-            .then_with(|| right.lexical_score.partial_cmp(&left.lexical_score).unwrap_or(Ordering::Equal))
+            .then_with(|| {
+                right
+                    .lexical_score
+                    .partial_cmp(&left.lexical_score)
+                    .unwrap_or(Ordering::Equal)
+            })
     });
     candidates.truncate(top_k);
 
@@ -242,20 +288,25 @@ pub fn is_supported_file_name(name: &str) -> bool {
         .map(|extension| {
             matches!(
                 extension.to_ascii_lowercase().as_str(),
-                "txt" | "md" | "csv" | "json" | "jsonl" | "pdf" | "docx" | "rtf" | "epub"
+                "txt" | "md" | "csv" | "json" | "jsonl" | "docx" | "rtf" | "epub"
             )
         })
         .unwrap_or(false)
 }
 
 pub fn extract_text(path: &Path) -> anyhow::Result<String> {
-    let bytes = std::fs::read(path)?;
-    let text = String::from_utf8_lossy(&bytes);
     let cleaned = match extension(path).as_deref() {
-        Some("rtf") => strip_rtf(&text),
-        Some("pdf") => extract_pdf_text(&text),
-        Some("docx") | Some("epub") => extract_zip_like_text(&text),
-        _ => text.to_string(),
+        Some("docx") => extract_docx_text(path)?,
+        Some("epub") => extract_epub_text(path)?,
+        Some("pdf") => anyhow::bail!("PDF extraction is not supported yet"),
+        Some("rtf") => {
+            let bytes = std::fs::read(path)?;
+            strip_rtf(&String::from_utf8_lossy(&bytes))
+        }
+        _ => {
+            let bytes = std::fs::read(path)?;
+            String::from_utf8_lossy(&bytes).to_string()
+        }
     };
     let normalized = normalize_text(&cleaned);
     if normalized.chars().filter(|ch| !ch.is_control()).count() < 8 {
@@ -314,7 +365,10 @@ pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
     if left.len() != right.len() || left.is_empty() {
         return 0.0;
     }
-    left.iter().zip(right.iter()).map(|(a, b)| a * b).sum::<f32>()
+    left.iter()
+        .zip(right.iter())
+        .map(|(a, b)| a * b)
+        .sum::<f32>()
 }
 
 fn get_stack(conn: &Connection, id: &str) -> anyhow::Result<KnowledgeStack> {
@@ -393,7 +447,14 @@ fn update_source_status(
         "UPDATE knowledge_sources
          SET status = ?1, content_hash = ?2, indexed_at = ?3, error = ?4, updated_at = ?5
          WHERE id = ?6",
-        params![status, content_hash, indexed_at, error, timestamp(), source_id],
+        params![
+            status,
+            content_hash,
+            indexed_at,
+            error,
+            timestamp(),
+            source_id
+        ],
     )?;
     get_source(conn, source_id)
 }
@@ -409,11 +470,68 @@ fn get_source(conn: &Connection, id: &str) -> anyhow::Result<KnowledgeSource> {
     .map_err(Into::into)
 }
 
-fn replace_chunks(conn: &Connection, stack_id: &str, source_id: &str, text: &str) -> anyhow::Result<()> {
-    conn.execute("DELETE FROM knowledge_chunks_fts WHERE source_id = ?1", params![source_id])?;
-    conn.execute("DELETE FROM knowledge_chunks WHERE source_id = ?1", params![source_id])?;
+fn find_source_by_path(
+    conn: &Connection,
+    stack_id: &str,
+    path: &Path,
+) -> anyhow::Result<Option<KnowledgeSource>> {
+    conn.query_row(
+        "SELECT id, stack_id, path, title, format, status, content_hash, indexed_at, error, created_at, updated_at
+         FROM knowledge_sources
+         WHERE stack_id = ?1 AND path = ?2",
+        params![stack_id, path.display().to_string()],
+        read_source,
+    )
+    .optional()
+    .map_err(Into::into)
+}
 
-    for (index, chunk) in chunk_text(text, DEFAULT_CHUNK_TOKENS, DEFAULT_CHUNK_OVERLAP).into_iter().enumerate() {
+fn replace_chunks_atomically(
+    conn: &Connection,
+    stack_id: &str,
+    source_id: &str,
+    text: &str,
+    hash: String,
+) -> anyhow::Result<KnowledgeSource> {
+    let savepoint = format!("knowledge_reindex_{}", Uuid::new_v4().simple());
+    conn.execute_batch(&format!("SAVEPOINT {savepoint}"))?;
+    let result = (|| {
+        replace_chunks(conn, stack_id, source_id, text)?;
+        update_source_status(conn, source_id, "indexed", Some(hash), None)
+    })();
+
+    match result {
+        Ok(source) => {
+            conn.execute_batch(&format!("RELEASE SAVEPOINT {savepoint}"))?;
+            Ok(source)
+        }
+        Err(error) => {
+            let _ = conn.execute_batch(&format!("ROLLBACK TO SAVEPOINT {savepoint}"));
+            let _ = conn.execute_batch(&format!("RELEASE SAVEPOINT {savepoint}"));
+            Err(error)
+        }
+    }
+}
+
+fn replace_chunks(
+    conn: &Connection,
+    stack_id: &str,
+    source_id: &str,
+    text: &str,
+) -> anyhow::Result<()> {
+    conn.execute(
+        "DELETE FROM knowledge_chunks_fts WHERE source_id = ?1",
+        params![source_id],
+    )?;
+    conn.execute(
+        "DELETE FROM knowledge_chunks WHERE source_id = ?1",
+        params![source_id],
+    )?;
+
+    for (index, chunk) in chunk_text(text, DEFAULT_CHUNK_TOKENS, DEFAULT_CHUNK_OVERLAP)
+        .into_iter()
+        .enumerate()
+    {
         let chunk_id = Uuid::new_v4().to_string();
         let vector = embed_text(&chunk.text);
         conn.execute(
@@ -442,7 +560,11 @@ fn replace_chunks(conn: &Connection, stack_id: &str, source_id: &str, text: &str
     Ok(())
 }
 
-fn lexical_search(conn: &Connection, stack_ids: &[String], query: &str) -> anyhow::Result<HashMap<String, f32>> {
+fn lexical_search(
+    conn: &Connection,
+    stack_ids: &[String],
+    query: &str,
+) -> anyhow::Result<HashMap<String, f32>> {
     let match_query = fts_query(query);
     if match_query.is_empty() {
         return Ok(HashMap::new());
@@ -464,10 +586,7 @@ fn lexical_search(conn: &Connection, stack_ids: &[String], query: &str) -> anyho
         params.push(stack_id as &dyn rusqlite::ToSql);
     }
     let rows = stmt.query_map(params.as_slice(), |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, f32>(1)?,
-        ))
+        Ok((row.get::<_, String>(0)?, row.get::<_, f32>(1)?))
     })?;
 
     let mut scored = Vec::new();
@@ -498,14 +617,25 @@ fn lexical_search(conn: &Connection, stack_ids: &[String], query: &str) -> anyho
 }
 
 fn all_chunks(conn: &Connection, stack_ids: &[String]) -> anyhow::Result<Vec<SearchCandidate>> {
-    let allowed = stack_ids.iter().collect::<HashSet<_>>();
-    let mut stmt = conn.prepare(
+    if stack_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = stack_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!(
         "SELECT c.id, c.stack_id, c.source_id, s.title, c.content, e.vector
          FROM knowledge_chunks c
          JOIN knowledge_sources s ON s.id = c.source_id
-         JOIN knowledge_embeddings e ON e.chunk_id = c.id",
-    )?;
-    let rows = stmt.query_map([], |row| {
+         JOIN knowledge_embeddings e ON e.chunk_id = c.id
+         WHERE c.stack_id IN ({})",
+        placeholders
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params = stack_ids
+        .iter()
+        .map(|stack_id| stack_id as &dyn rusqlite::ToSql)
+        .collect::<Vec<_>>();
+    let rows = stmt.query_map(params.as_slice(), |row| {
         Ok(SearchCandidate {
             chunk_id: row.get(0)?,
             stack_id: row.get(1)?,
@@ -521,10 +651,7 @@ fn all_chunks(conn: &Connection, stack_ids: &[String]) -> anyhow::Result<Vec<Sea
 
     let mut chunks = Vec::new();
     for row in rows {
-        let candidate = row?;
-        if allowed.contains(&candidate.stack_id) {
-            chunks.push(candidate);
-        }
+        chunks.push(row?);
     }
     Ok(chunks)
 }
@@ -538,8 +665,8 @@ fn discover_files(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
     for entry in std::fs::read_dir(root)? {
         let entry = entry?;
         let path = entry.path();
-        let metadata = entry.metadata()?;
-        if metadata.is_symlink() {
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() {
             continue;
         }
         if metadata.is_dir() {
@@ -583,36 +710,76 @@ fn strip_rtf(text: &str) -> String {
     output
 }
 
-fn extract_pdf_text(text: &str) -> String {
-    let mut extracted = String::new();
-    let mut in_literal = false;
+fn extract_docx_text(path: &Path) -> anyhow::Result<String> {
+    let file = File::open(path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut document = archive.by_name("word/document.xml")?;
+    let mut xml = String::new();
+    document.read_to_string(&mut xml)?;
+    Ok(strip_markup(&xml))
+}
+
+fn extract_epub_text(path: &Path) -> anyhow::Result<String> {
+    let file = File::open(path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut text = String::new();
+
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        let name = entry.name().to_ascii_lowercase();
+        if !(name.ends_with(".xhtml") || name.ends_with(".html") || name.ends_with(".xml")) {
+            continue;
+        }
+
+        let mut contents = String::new();
+        if entry.read_to_string(&mut contents).is_ok() {
+            text.push(' ');
+            text.push_str(&strip_markup(&contents));
+        }
+    }
+
+    Ok(text)
+}
+
+fn strip_markup(text: &str) -> String {
+    let mut output = String::new();
+    let mut in_tag = false;
+    let mut entity: Option<String> = None;
+
     for ch in text.chars() {
         match ch {
-            '(' => in_literal = true,
-            ')' => {
-                in_literal = false;
-                extracted.push(' ');
+            '<' => {
+                in_tag = true;
+                output.push(' ');
             }
-            _ if in_literal && !ch.is_control() => extracted.push(ch),
+            '>' => {
+                in_tag = false;
+                output.push(' ');
+            }
+            '&' if !in_tag => entity = Some(String::new()),
+            ';' if !in_tag && entity.is_some() => {
+                let name = entity.take().unwrap_or_default();
+                output.push_str(match name.as_str() {
+                    "amp" => "&",
+                    "lt" => "<",
+                    "gt" => ">",
+                    "quot" => "\"",
+                    "apos" => "'",
+                    _ => " ",
+                });
+            }
+            _ if in_tag => {}
+            _ if entity.is_some() => {
+                if let Some(name) = entity.as_mut() {
+                    name.push(ch);
+                }
+            }
+            _ if !ch.is_control() => output.push(ch),
             _ => {}
         }
     }
-    if extracted.trim().is_empty() {
-        text.chars()
-            .map(|ch| if ch.is_ascii_graphic() || ch.is_whitespace() { ch } else { ' ' })
-            .collect()
-    } else {
-        extracted
-    }
-}
 
-fn extract_zip_like_text(text: &str) -> String {
-    text.replace('<', " ")
-        .replace('>', " ")
-        .replace('/', " ")
-        .chars()
-        .map(|ch| if ch.is_ascii_graphic() || ch.is_whitespace() { ch } else { ' ' })
-        .collect()
+    output
 }
 
 fn tokenize(text: &str) -> Vec<String> {
@@ -702,7 +869,9 @@ fn read_source(row: &rusqlite::Row<'_>) -> rusqlite::Result<KnowledgeSource> {
     })
 }
 
-fn collect_rows<T>(rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>>) -> anyhow::Result<Vec<T>> {
+fn collect_rows<T>(
+    rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>>,
+) -> anyhow::Result<Vec<T>> {
     let mut values = Vec::new();
     for row in rows {
         values.push(row?);
