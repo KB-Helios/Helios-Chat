@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { appendAssistantToken, attachAssistantCitations, createInitialChatState, finishAssistantMessage, startAssistantMessage } from "./chatState";
+import { addUserMessage, appendAssistantToken, attachAssistantCitations, createInitialChatState, editMessage, finishAssistantMessage, startAssistantMessage } from "./chatState";
 
 describe("chat state", () => {
   it("streams assistant tokens into the active draft message", () => {
@@ -78,7 +78,21 @@ describe("chat state", () => {
       { sourceTitle: "doc.txt", content: "content", score: 0.85 }
     ]);
 
-    const userMsg = cited.messages.find((m) => m.id === "user-1");
+    const userMsg = cited.messages.find((message) => message.id === "user-1");
     assert.equal(userMsg?.citations, undefined);
+  });
+
+  it("branches from an edited user message and removes later responses", () => {
+    const initial = createInitialChatState("Qwen3 4B");
+    const withUser = addUserMessage(initial, "hello");
+    const userId = withUser.messages[0].id;
+    const withDraft = startAssistantMessage(withUser, "assistant-1", userId);
+    const finished = finishAssistantMessage(appendAssistantToken(withDraft, "old answer"));
+
+    const edited = editMessage(finished, userId, "updated hello");
+
+    assert.equal(edited.messages.length, 1);
+    assert.equal(edited.messages[0].id, userId);
+    assert.equal(edited.messages[0].content, "updated hello");
   });
 });

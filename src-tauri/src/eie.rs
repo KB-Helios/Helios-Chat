@@ -43,6 +43,8 @@ pub struct ChatMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatRequest {
     pub conversation_id: Option<String>,
+    pub provider_id: Option<String>,
+    pub base_url: Option<String>,
     pub model: String,
     pub messages: Vec<ChatMessage>,
     pub temperature: f32,
