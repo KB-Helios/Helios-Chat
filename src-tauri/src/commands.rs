@@ -108,7 +108,6 @@ pub async fn engine_start(
 ) -> Result<EngineStatus, String> {
     let paths = AppPaths::resolve(&app).map_err(to_string)?;
     paths.ensure().map_err(to_string)?;
-    db::migrate(&paths.database).map_err(to_string)?;
     let settings = load_settings(&paths.settings).map_err(to_string)?;
     let input = eie::config_input_from_settings(
         &settings,
@@ -638,7 +637,6 @@ fn settings_for_app(app: &AppHandle) -> Result<HeliosSettings, String> {
 fn knowledge_connection(app: &AppHandle) -> Result<rusqlite::Connection, String> {
     let paths = AppPaths::resolve(app).map_err(to_string)?;
     paths.ensure().map_err(to_string)?;
-    db::migrate(&paths.database).map_err(to_string)?;
     let conn = rusqlite::Connection::open(&paths.database).map_err(to_string)?;
     conn.execute("PRAGMA foreign_keys = ON", [])
         .map_err(to_string)?;
