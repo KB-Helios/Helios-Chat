@@ -187,6 +187,7 @@ async fn send_openai_compatible(
 ) -> anyhow::Result<ChatResponse> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(10))
         .build()?;
     let response = client
         .post(url)
@@ -251,6 +252,7 @@ async fn send_anthropic(key: &str, request: &ChatRequest) -> anyhow::Result<Chat
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(10))
         .build()?;
     let response = client
         .post("https://api.anthropic.com/v1/messages")
@@ -318,6 +320,7 @@ async fn send_google(key: &str, request: &ChatRequest) -> anyhow::Result<ChatRes
     );
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(10))
         .build()?;
     let response = client
         .post(url)
